@@ -12,6 +12,7 @@
     "configurations": [
         {
             "name": "h723_mc02",
+            "compileCommands": "${workspaceFolder}/build/h723_mc02/compile_commands.json",
             "compilerPath": "arm-none-eabi-g++",
             "compilerArgs": [
                 "-mcpu=cortex-m7",
@@ -54,6 +55,7 @@
         },
         {
             "name": "f407_cboard",
+            "compileCommands": "${workspaceFolder}/build/f407_cboard/compile_commands.json",
             "compilerPath": "arm-none-eabi-g++",
             "compilerArgs": [
                 "-mcpu=cortex-m4",

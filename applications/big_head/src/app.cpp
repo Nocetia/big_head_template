@@ -1,0 +1,693 @@
+#include "control.hpp"
+#include "remote_stream.hpp"
+#include "user_config.hpp"
+#include "attitude.hpp"
+#include "bsp_dwt.hpp"
+#include "bsp_usb.hpp"
+#include "dji_manager.hpp"
+#include "gm6020.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace big_head
+{
+namespace cfg = user_config::application::big_head;
+using pnxtypes::status;
+
+// Visible in the debugger; counters are written only by their owning thread/IRQ.
+struct diagnostics
+{
+    uint32_t control_overruns = 0;
+    uint32_t motor_tx_failures = 0;
+    uint32_t lower_tx_failures = 0;
+    uint32_t motor_restarts = 0;
+    uint32_t lower_restarts = 0;
+    uint32_t usb_tx_failures = 0;
+    uint32_t usb_partial_writes = 0;
+    uint32_t pitch_saturations = 0;
+};
+
+diagnostics diagnostic;
+
+namespace
+{
+static_assert(TX_TIMER_TICKS_PER_SECOND == 1000, "The migrated gains require a 1 kHz tick");
+
+template <typename T> struct sample
+{
+    T data{};
+    uint32_t received_ms = 0;
+    uint32_t sequence = 0;
+    bool valid = false;
+};
+
+template <typename T> bool fresh(const sample<T>& value, uint32_t now, uint32_t timeout)
+{
+    return value.valid && uint32_t(now - value.received_ms) < timeout;
+}
+
+struct can_bytes
+{
+    uint8_t bytes[8]{};
+};
+
+// Only these short copies cross the IRQ/foreground boundary. Parsing and motor
+// methods run outside the critical section, in the control thread.
+sample<can_bytes> can_received[4];
+constexpr uint16_t motor_ids[]{cfg::friction_left_id, cfg::friction_right_id, cfg::pitch_id};
+
+struct uart_bytes
+{
+    uint8_t data[256]{};
+    uint16_t size = 0;
+    uint32_t received_ms = 0;
+    bool reset = false;
+};
+
+struct remote_receiver
+{
+    bsp::usart::config resource;
+    bsp::usart::line_config line;
+    memory::buffer<64>& dma;
+    remote_stream parser;
+    uart_bytes queued{};
+    sample<remotes::reading> latest{};
+    uint32_t last_attempt_ms = 0;
+    uint32_t overflows = 0;
+    uint32_t restarts = 0;
+    bool enabled;
+    bool started = false;
+};
+
+memory::buffer<64> dr16_dma RAM_D1_BSS;
+memory::buffer<64> vt03_dma RAM_D1_BSS;
+
+bsp::usart::line_config vt03_line()
+{
+    auto line = user_config::vt03_line;
+    line.baud_rate = cfg::vt03_baud_rate;
+    return line;
+}
+
+remote_receiver remotes_rx[]{{user_config::dr16_uart, user_config::dr16_line, dr16_dma,
+                                 remote_stream{false}, {}, {}, 0, 0, 0,
+                                 user_config::remoter_dr16_enabled},
+    {user_config::vt03_uart, vt03_line(), vt03_dma, remote_stream{true}, {}, {}, 0, 0, 0,
+        user_config::remoter_vt03_enabled}};
+
+struct can_bus
+{
+    bsp::can::config resource;
+    uint32_t last_attempt_ms = 0;
+    uint32_t last_tx_ms = 0;
+    bool ready = false;
+};
+
+can_bus motor_bus{user_config::motor_can};
+can_bus lower_bus{user_config::lower_can};
+
+// The old friction wheels use rotor speed (GearBox_None). This application-only
+// model uses the existing DJI implementation without changing the geared M3508.
+class friction_motor final : public motor::dji::motor
+{
+public:
+    friction_motor()
+        : motor({cfg::friction_gear_ratio, 15000, cfg::friction_velocity_pid[3], 100.0f, 8192})
+    {
+        speed_pid = control::pid(cfg::friction_velocity_pid[0], cfg::friction_velocity_pid[1],
+            cfg::friction_velocity_pid[2], cfg::friction_velocity_pid[3],
+            cfg::friction_velocity_pid[4]);
+    }
+};
+
+friction_motor friction_left;
+friction_motor friction_right;
+motor::dji::gm6020 pitch;
+
+bool send_motor(void*, uint8_t bus, const motor::dji::frame_t& frame)
+{
+    if (bus != 0 || !motor_bus.ready)
+    {
+        return false;
+    }
+    const auto result =
+        bsp::can::transmit(motor_bus.resource.instance, frame.id, frame.data, frame.length);
+    if (result != status::ok)
+    {
+        ++diagnostic.motor_tx_failures;
+        return false;
+    }
+    motor_bus.last_tx_ms = HAL_GetTick();
+    return true;
+}
+
+motor::dji::manager motors{send_motor};
+msg::subscriber<imu::attitude::state> attitude_reader;
+sample<vision_command> vision_received;
+sample<vision_telemetry> telemetry;
+vision_parser vision_decoder;
+
+TX_THREAD control_thread;
+TX_THREAD usb_thread;
+alignas(8) uint8_t control_stack[cfg::control_stack_size];
+alignas(8) uint8_t usb_stack[cfg::usb_stack_size];
+
+control_parameters control_settings()
+{
+    control_parameters result{};
+    std::copy_n(cfg::yaw_position_pid, 5, result.yaw_position_pid);
+    std::copy_n(cfg::yaw_velocity_pid, 5, result.yaw_velocity_pid);
+    std::copy_n(cfg::pitch_position_pid, 5, result.pitch_position_pid);
+    std::copy_n(cfg::pitch_velocity_pid, 5, result.pitch_velocity_pid);
+    std::copy_n(cfg::yaw_feedforward, 4, result.yaw_feedforward);
+    std::copy_n(cfg::pitch_feedforward, 4, result.pitch_feedforward);
+    std::copy_n(cfg::manual_yaw_filter, 2, result.manual_yaw_filter);
+    std::copy_n(cfg::manual_pitch_filter, 2, result.manual_pitch_filter);
+    std::copy_n(cfg::vision_filter, 2, result.vision_filter);
+    result.yaw_current_limit = cfg::yaw_current_limit;
+    result.pitch_current_limit = cfg::pitch_current_limit;
+    result.pitch_current_scale = cfg::pitch_current_scale;
+    result.pitch_gravity_manual = cfg::pitch_gravity_manual;
+    result.pitch_gravity_auto = cfg::pitch_gravity_auto;
+    result.pitch_min = cfg::pitch_min;
+    result.pitch_max = cfg::pitch_max;
+    result.manual_deadband = cfg::manual_deadband;
+    result.manual_angle_scale = cfg::manual_angle_scale;
+    result.mouse_yaw_scale = cfg::mouse_yaw_scale;
+    result.mouse_pitch_scale = cfg::mouse_pitch_scale;
+    result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;
+    result.friction_speed = cfg::friction_speed;
+    result.friction_ready_ratio = cfg::friction_ready_ratio;
+    result.friction_drop = cfg::friction_drop;
+    result.heat_fraction = cfg::heat_fraction;
+    result.fire_angle_tolerance = cfg::fire_angle_tolerance;
+    result.trigger_low = cfg::trigger_low;
+    result.trigger_high = cfg::trigger_high;
+    result.trigger_continuous = cfg::trigger_continuous;
+    result.trigger_reverse = cfg::trigger_reverse;
+    result.auto_fire_timeout_ms = cfg::auto_fire_timeout_ms;
+    result.auto_aim_default = cfg::auto_aim_default;
+    result.auto_shoot_default = cfg::auto_shoot_default;
+    result.gimbal_only_default = cfg::gimbal_only_default;
+    return result;
+}
+
+void can_receive(bsp::can::handle bus, const bsp::can::rx_frame& frame)
+{
+    if (frame.len != 8 || frame.remote || frame.id_kind != bsp::can::id_type::standard ||
+        frame.format != bsp::can::frame_mode::classic)
+    {
+        return;
+    }
+    unsigned slot = 4;
+    if (bus == motor_bus.resource.instance)
+    {
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            if (frame.id == motor_ids[i])
+            {
+                slot = i;
+                break;
+            }
+        }
+        if (slot == 4 || (uint16_t(frame.data[0]) << 8U | frame.data[1]) >= 8192)
+        {
+            return;
+        }
+    }
+    else if (bus == lower_bus.resource.instance && frame.id == lower_status_id)
+    {
+        slot = 3;
+    }
+    if (slot == 4)
+    {
+        return;
+    }
+    const auto now = HAL_GetTick();
+    const auto mask = __get_PRIMASK();
+    __disable_irq();
+    auto& received = can_received[slot];
+    std::memcpy(received.data.bytes, frame.data, sizeof(received.data.bytes));
+    received.received_ms = now;
+    ++received.sequence;
+    received.valid = true;
+    __set_PRIMASK(mask);
+}
+
+void uart_receive(bsp::usart::handle instance, uint8_t* bytes, uint32_t size)
+{
+    for (auto& remote : remotes_rx)
+    {
+        if (!remote.enabled || remote.resource.instance != instance)
+        {
+            continue;
+        }
+        const auto now = HAL_GetTick();
+        const auto mask = __get_PRIMASK();
+        __disable_irq();
+        auto& queued = remote.queued;
+        if (uint32_t(now - queued.received_ms) >= user_config::remoter::offline_timeout_ms)
+        {
+            queued.size = 0;
+            queued.reset = true;
+        }
+        queued.received_ms = now;
+        if (size > sizeof(queued.data) - queued.size)
+        {
+            queued.size = 0;
+            queued.reset = true;
+            ++remote.overflows;
+        }
+        else
+        {
+            std::memcpy(queued.data + queued.size, bytes, size);
+            queued.size += static_cast<uint16_t>(size);
+        }
+        __set_PRIMASK(mask);
+        return;
+    }
+}
+
+void usb_receive(const uint8_t* bytes, uint32_t size)
+{
+    // The BSP USB RX thread is the sole parser owner and uses its 2048-byte stack.
+    static uint32_t last_chunk_ms = 0;
+    const auto now = HAL_GetTick();
+    if (uint32_t(now - last_chunk_ms) >= cfg::vision_timeout_ms)
+    {
+        vision_decoder.reset();
+    }
+    last_chunk_ms = now;
+    for (uint32_t i = 0; i < size; ++i)
+    {
+        vision_command decoded;
+        if (vision_decoder.push(bytes[i], decoded))
+        {
+            const auto mask = __get_PRIMASK();
+            __disable_irq();
+            vision_received.data = decoded;
+            vision_received.received_ms = now;
+            ++vision_received.sequence;
+            vision_received.valid = true;
+            __set_PRIMASK(mask);
+        }
+    }
+}
+
+bool start_remote(remote_receiver& remote)
+{
+    // BSP mode selects TX behavior; DMA RX works in block mode, including UART5
+    // which has no TX DMA. configure() invalidates init(), so initialize again.
+    if (bsp::usart::init(remote.resource) != status::ok ||
+        bsp::usart::configure(remote.resource.instance, remote.line) != status::ok ||
+        bsp::usart::init(remote.resource) != status::ok)
+    {
+        return false;
+    }
+    std::memset(remote.dma.data(), 0, remote.dma.capacity());
+    return bsp::usart::start_rx_to_idle(remote.resource.instance, remote.dma,
+               bsp::usart::rx_callback::bind<uart_receive>()) == status::ok;
+}
+
+void read_remote(remote_receiver& remote)
+{
+    if (!remote.enabled)
+    {
+        return;
+    }
+    uart_bytes received;
+    {
+        const auto mask = __get_PRIMASK();
+        __disable_irq();
+        received = remote.queued;
+        remote.queued.size = 0;
+        remote.queued.reset = false;
+        __set_PRIMASK(mask);
+    }
+    const auto now = HAL_GetTick();
+    if (received.reset)
+    {
+        remote.parser.reset();
+        remote.latest.valid = false;
+    }
+    if (uint32_t(now - received.received_ms) < user_config::remoter::offline_timeout_ms)
+    {
+        for (uint16_t i = 0; i < received.size; ++i)
+        {
+            remotes::reading value;
+            if (remote.parser.push(received.data[i], value))
+            {
+                remote.latest.data = value;
+                remote.latest.received_ms = received.received_ms;
+                ++remote.latest.sequence;
+                remote.latest.valid = true;
+            }
+        }
+    }
+    if (remote.started && bsp::usart::rx_status(remote.resource.instance) == status::ok &&
+        fresh(remote.latest, now, user_config::remoter::offline_timeout_ms))
+    {
+        return;
+    }
+    if (uint32_t(now - remote.last_attempt_ms) < cfg::recovery_period_ms)
+    {
+        return;
+    }
+    remote.last_attempt_ms = now;
+    remote.latest.valid = false;
+    remote.parser.reset();
+    if (bsp::usart::stop_rx(remote.resource.instance) != status::ok)
+    {
+        return;
+    }
+    {
+        const auto mask = __get_PRIMASK();
+        __disable_irq();
+        remote.queued = {};
+        __set_PRIMASK(mask);
+    }
+    remote.started = start_remote(remote);
+    ++remote.restarts;
+}
+
+bool recover_can(can_bus& bus, bool motor, uint32_t now)
+{
+    auto* errors = bsp::can::err_sem(bus.resource.instance);
+    bool error = bsp::can::current_status(bus.resource.instance) != status::ok;
+    for (unsigned i = 0; errors != nullptr && i < 8; ++i)
+    {
+        if (tx_semaphore_get(errors, TX_NO_WAIT) != TX_SUCCESS)
+        {
+            break;
+        }
+        error = true;
+    }
+    // A full TX FIFO can otherwise leave the last nonzero command queued forever.
+    error = error || uint32_t(now - bus.last_tx_ms) >= cfg::motor_timeout_ms;
+    if (error || !bus.ready)
+    {
+        const bool first_fault = bus.ready;
+        bus.ready = false;
+        const auto mask = __get_PRIMASK();
+        __disable_irq();
+        for (unsigned i = motor ? 0 : 3; i < (motor ? 3U : 4U); ++i)
+        {
+            can_received[i].valid = false;
+        }
+        __set_PRIMASK(mask);
+        // Handle the first fault immediately, including non-bus-off notifications
+        // where hardware can still hold a nonzero command. Throttle failed retries only.
+        if (first_fault || uint32_t(now - bus.last_attempt_ms) >= cfg::recovery_period_ms)
+        {
+            bus.last_attempt_ms = now;
+            bus.ready = bsp::can::restart(bus.resource.instance) == status::ok;
+            bus.last_tx_ms = now;
+            if (motor)
+            {
+                ++diagnostic.motor_restarts;
+            }
+            else
+            {
+                ++diagnostic.lower_restarts;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+vision_telemetry make_telemetry(const imu::attitude::state& attitude, const control_input& input,
+    const control_output& output)
+{
+    vision_telemetry result;
+    result.detect_color = !input.lower.color;
+    result.mode = 1;
+    result.yaw = input.total_yaw * 180.0f / math::pi;
+    result.pitch = input.pitch * 180.0f / math::pi;
+    result.gyro_pitch = input.gyro_pitch;
+    result.gyro_yaw = input.gyro_yaw;
+    result.bullet_speed = input.lower.bullet_speed;
+    result.bullet_count = output.bullet_count;
+    // Rebuild the legacy gimbal quaternion after the old mounting-axis mapping.
+    const float cy = std::cos(attitude.yaw * 0.5f);
+    const float sy = std::sin(attitude.yaw * 0.5f);
+    const float cp = std::cos(attitude.roll * 0.5f);
+    const float sp = std::sin(attitude.roll * 0.5f);
+    const float cr = std::cos(-attitude.pitch * 0.5f);
+    const float sr = std::sin(-attitude.pitch * 0.5f);
+    result.q[0] = cr * cp * cy + sr * sp * sy;
+    result.q[1] = sr * cp * cy - cr * sp * sy;
+    result.q[2] = cr * sp * cy + sr * cp * sy;
+    result.q[3] = cr * cp * sy - sr * sp * cy;
+    return result;
+}
+
+void control_entry(ULONG)
+{
+    controller control{control_settings()};
+    imu::attitude::state attitude;
+    sample<lower_status> lower;
+    uint32_t consumed[4]{};
+    uint32_t remote_sequences[2]{};
+    for (auto& remote : remotes_rx)
+    {
+        if (remote.enabled)
+        {
+            remote.started = start_remote(remote);
+            remote.last_attempt_ms = HAL_GetTick();
+        }
+    }
+    ULONG deadline = tx_time_get();
+    for (;;)
+    {
+        const auto started_ms = HAL_GetTick();
+        const bool motor_recovering = recover_can(motor_bus, true, started_ms);
+        const bool lower_recovering = recover_can(lower_bus, false, started_ms);
+        sample<can_bytes> received[4];
+        sample<vision_command> vision;
+        {
+            const auto mask = __get_PRIMASK();
+            __disable_irq();
+            std::copy_n(can_received, 4, received);
+            vision = vision_received;
+            __set_PRIMASK(mask);
+        }
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            if (received[i].valid && received[i].sequence != consumed[i])
+            {
+                motors.receive(0, motor_ids[i], received[i].data.bytes);
+                consumed[i] = received[i].sequence;
+            }
+        }
+        if (!received[3].valid)
+        {
+            lower.valid = false;
+        }
+        else if (received[3].sequence != consumed[3])
+        {
+            lower_status value;
+            if (decode_lower_status(received[3].data.bytes, 8, value))
+            {
+                lower = {value, received[3].received_ms, received[3].sequence, true};
+            }
+            consumed[3] = received[3].sequence;
+        }
+        for (auto& remote : remotes_rx)
+        {
+            read_remote(remote);
+        }
+        (void)attitude_reader.read(attitude);
+        // Timestamp after the copies: an IRQ may have delivered a sample after
+        // this cycle began, and unsigned age must not mistake it for an old one.
+        const auto now = HAL_GetTick();
+        control_input input;
+        input.now_ms = now;
+        // Preserve old input priority: an online DR16 takes precedence over VT03.
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            const auto& value = remotes_rx[i].latest;
+            if (remotes_rx[i].enabled &&
+                fresh(value, now, user_config::remoter::offline_timeout_ms))
+            {
+                input.remote = value.data;
+                input.source = i == 0 ? remote_source::dr16 : remote_source::vt03;
+                input.remote_valid = true;
+                input.remote_new_frame = value.sequence != remote_sequences[i];
+                remote_sequences[i] = value.sequence;
+                break;
+            }
+        }
+        input.pitch = attitude.roll;
+        input.yaw = attitude.yaw;
+        input.total_yaw = attitude.total_yaw;
+        input.gyro_pitch = attitude.gyro.x;
+        input.gyro_yaw = attitude.gyro.z;
+        input.imu_valid = attitude.online && attitude.stage == imu::attitude::phase::running &&
+                          uint32_t(now - attitude.received_ms) < cfg::imu_timeout_ms &&
+                          std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
+                          std::isfinite(attitude.yaw) && std::isfinite(attitude.total_yaw) &&
+                          std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.z);
+        input.vision = vision.data;
+        input.vision_valid = fresh(vision, now, cfg::vision_timeout_ms);
+        input.lower = lower.data;
+        input.lower_valid =
+            lower_bus.ready && !lower_recovering && fresh(lower, now, cfg::lower_timeout_ms);
+        input.friction_left_speed = friction_left.fdb.velocity;
+        input.friction_right_speed = friction_right.fdb.velocity;
+        input.friction_left_online =
+            motor_bus.ready && !motor_recovering && fresh(received[0], now, cfg::motor_timeout_ms);
+        input.friction_right_online =
+            motor_bus.ready && !motor_recovering && fresh(received[1], now, cfg::motor_timeout_ms);
+        input.pitch_online =
+            motor_bus.ready && !motor_recovering && fresh(received[2], now, cfg::motor_timeout_ms);
+        const auto output = control.update(input);
+
+        pitch.motor_mode =
+            output.mode == gimbal_mode::relax ? motor::mode::relax : motor::mode::current;
+        pitch.cmd.current = output.pitch_current;
+        if (std::abs(output.pitch_current) >= cfg::pitch_current_limit)
+        {
+            ++diagnostic.pitch_saturations;
+        }
+        friction_left.motor_mode = output.friction_enabled ? motor::mode::vel : motor::mode::relax;
+        friction_right.motor_mode = friction_left.motor_mode;
+        friction_left.cmd.velocity = output.friction_left_speed;
+        friction_right.cmd.velocity = output.friction_right_speed;
+        if (!output.friction_enabled)
+        {
+            friction_left.speed_pid.reset_state(0.0f, friction_left.fdb.velocity);
+            friction_right.speed_pid.reset_state(0.0f, friction_right.fdb.velocity);
+        }
+        motors.update();
+        motors.transmit(static_cast<uint32_t>(bsp::dwt::timeline_us()));
+        if (lower_bus.ready)
+        {
+            // Commands take priority over UI in FDCAN2's two-element TX FIFO.
+            const auto command = encode_lower_command(output.lower);
+            if (bsp::can::transmit(lower_bus.resource.instance, lower_command_id, command.data(),
+                    command.size()) == status::ok)
+            {
+                lower_bus.last_tx_ms = now;
+                const auto ui = encode_lower_ui(output.ui);
+                if (bsp::can::transmit(lower_bus.resource.instance, lower_ui_id, ui.data(),
+                        ui.size()) != status::ok)
+                {
+                    ++diagnostic.lower_tx_failures;
+                }
+            }
+            else
+            {
+                ++diagnostic.lower_tx_failures;
+            }
+        }
+
+        // The legacy TX frame has no validity bits. Do not represent stale IMU or
+        // lower-board color/ballistic data as a valid vision telemetry packet.
+        sample<vision_telemetry> next;
+        if (input.imu_valid && input.lower_valid)
+        {
+            next.data = make_telemetry(attitude, input, output);
+            next.received_ms = attitude.received_ms;
+            next.valid = true;
+        }
+        {
+            const auto mask = __get_PRIMASK();
+            __disable_irq();
+            next.sequence = telemetry.sequence + 1;
+            telemetry = next;
+            __set_PRIMASK(mask);
+        }
+        deadline += cfg::control_period_ms;
+        const auto remaining = static_cast<int32_t>(deadline - tx_time_get());
+        if (remaining > 0)
+        {
+            tx_thread_sleep(static_cast<ULONG>(remaining));
+        }
+        else
+        {
+            ++diagnostic.control_overruns;
+            tx_thread_sleep(1);
+            deadline = tx_time_get();
+        }
+    }
+}
+
+void usb_entry(ULONG)
+{
+    for (;;)
+    {
+        sample<vision_telemetry> value;
+        {
+            const auto mask = __get_PRIMASK();
+            __disable_irq();
+            value = telemetry;
+            __set_PRIMASK(mask);
+        }
+        if (bsp::usb::connected() && fresh(value, HAL_GetTick(), cfg::imu_timeout_ms))
+        {
+            const auto packet = encode_vision(value.data);
+            uint32_t transferred = 0;
+            const auto result = bsp::usb::write(packet.data(), packet.size(), transferred,
+                cfg::usb_write_timeout_ms);
+            if (result != status::ok || transferred != packet.size())
+            {
+                ++diagnostic.usb_tx_failures;
+                if (transferred != 0 && transferred != packet.size())
+                {
+                    ++diagnostic.usb_partial_writes;
+                }
+            }
+        }
+        tx_thread_sleep(cfg::usb_period_ms);
+    }
+}
+} // namespace
+} // namespace big_head
+
+extern "C" void app_start()
+{
+    using namespace big_head;
+    if (bsp::dwt::init() != status::ok ||
+        !motors.register_motor(friction_left, 0, cfg::friction_left_id) ||
+        !motors.register_motor(friction_right, 0, cfg::friction_right_id) ||
+        !motors.register_motor(pitch, 0, cfg::pitch_id))
+    {
+        Error_Handler();
+        return;
+    }
+    motors.set_period(cfg::control_period_ms * 0.001f);
+    motors.set_tx_period(0, 0x200, cfg::control_period_ms * 1000);
+    motors.set_tx_period(0, 0x1FF, cfg::control_period_ms * 1000);
+    for (auto* bus : {&motor_bus, &lower_bus})
+    {
+        if (bsp::can::register_rx_callback(bus->resource.instance,
+                bsp::can::rx_callback::bind<can_receive>()) != status::ok ||
+            bsp::can::init(bus->resource) != status::ok)
+        {
+            Error_Handler();
+            return;
+        }
+        bus->ready = true;
+        bus->last_tx_ms = HAL_GetTick();
+        bus->last_attempt_ms = bus->last_tx_ms - cfg::recovery_period_ms;
+    }
+    if (bsp::usb::on_rx(bsp::usb::rx_callback::bind<usb_receive>()) != status::ok ||
+        imu::start_bmi088() != status::ok)
+    {
+        Error_Handler();
+        return;
+    }
+    attitude_reader = imu::attitude::output.subscribe();
+    if (!attitude_reader ||
+        tx_thread_create(&control_thread, const_cast<CHAR*>("big_head"), control_entry, 0,
+            control_stack, sizeof(control_stack), cfg::control_priority, cfg::control_priority,
+            TX_NO_TIME_SLICE, TX_AUTO_START) != TX_SUCCESS ||
+        tx_thread_create(&usb_thread, const_cast<CHAR*>("vision_tx"), usb_entry, 0, usb_stack,
+            sizeof(usb_stack), cfg::usb_priority, cfg::usb_priority, TX_NO_TIME_SLICE,
+            TX_AUTO_START) != TX_SUCCESS)
+    {
+        Error_Handler();
+    }
+}
