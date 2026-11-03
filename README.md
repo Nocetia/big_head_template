@@ -15,6 +15,7 @@
 | `modules/referee` | 裁判接收线程、协议解析、类型缓存和可选类型回调 |
 | `configs` | 用户 JSON 配置及生成脚本、生成头文件 |
 | `applications/big_head` | H723 云台应用：VT03/DR16 输入、USB 视觉、BMI088、Pitch/双摩擦轮及下位机通信 |
+| `applications/test` | 可选的 H723 单 M3508 SMC 台架测试应用 |
 
 根工程链接 `modules`，通过它引入设备、BSP 和基础库。固件在链接时接入 ThreadX 初始化入口，默认创建 RFID 读取线程；BSP 保持原有实现；
 其他服务仍由应用显式启动。RFID 的遥控限制在设备解码层执行，应用无需检查权限标志。
@@ -22,6 +23,7 @@
 H723 默认启用 [`big_head` 应用](applications/big_head/README.md)，由其 `app_start()` 显式启动 BMI088
 并创建控制和 USB 发送线程。拨弹盘与 yaw 电机由下位机执行，本板通过 CAN 发送控制命令。
 `boards.h723_mc02.big_head_enabled` 可关闭应用；F407 默认不启用该应用。
+配置 `-DUSER_TEST=ON` 时由 [SMC 测试应用](applications/test/README.md) 替代 big_head 入口。
 
 ## 配置与接入
 

@@ -8,7 +8,9 @@
       "servertype": "openocd",
       "serverpath": "openocd",
       "cwd": "${workspaceFolder}",
-      "executable": "${workspaceFolder}/build/h723_mc02/embedded_framework.elf",
+    //   "executable": "${workspaceFolder}/build/h723_mc02/embedded_framework.elf",
+      "executable": "${workspaceFolder}/build/h723_smc_test/embedded_framework.elf",
+
       "configFiles": [
         "interface/cmsis-dap.cfg",
         "target/stm32h7x.cfg"

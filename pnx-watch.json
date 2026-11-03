@@ -1,0 +1,23 @@
+{
+  "format": "pnx-watch",
+  "version": 1,
+  "groups": [
+    {
+      "id": "default",
+      "name": "默认组"
+    }
+  ],
+  "plots": [
+    {
+      "id": "plot-1",
+      "name": "曲线 1",
+      "groupId": "default",
+      "seconds": 10
+    }
+  ],
+  "variables": [],
+  "activeGroup": "default",
+  "columns": 2,
+  "seconds": 10,
+  "rate": 1000
+}

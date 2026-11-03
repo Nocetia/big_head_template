@@ -27,4 +27,5 @@ target_link_libraries(${PROJECT_NAME} modules)
 
 # Start RFID from ThreadX initialization while leaving the BSP startup hook unchanged.
 target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--wrap=tx_application_define")
+add_subdirectory(applications/test)
 add_subdirectory(applications/big_head)
