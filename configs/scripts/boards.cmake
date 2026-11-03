@@ -66,6 +66,24 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
         config_float(_thermal_${_gain} 0 10000 boards ${_board} bmi088_thermal ${_gain})
     endforeach()
     config_float(_thermal_max_out 0 999 boards ${_board} bmi088_thermal max_out)
+    config_resource(_rfid_uart usart rfid_uart)
+    config_resource(_buzzer_timer pwm buzzer_timer)
+    config_integer(_buzzer_channel 1 4 boards ${_board} buzzer_channel)
+    if(NOT _buzzer_timer STREQUAL "bsp::pwm::config{}")
+        string(JSON _timer_name GET "${_json}" boards ${_board} buzzer_timer)
+        string(REGEX MATCH "pwm::config ${_timer_name}\\{[^}]+, (0x[0-9A-Fa-f]+)U" _timer_match "${_resources}")
+        if(NOT _timer_match)
+            message(FATAL_ERROR "Cannot find buzzer timer channel mask")
+        endif()
+        math(EXPR _channel_available "${CMAKE_MATCH_1} & (1 << (${_buzzer_channel} - 1))")
+        if(NOT _channel_available)
+            message(FATAL_ERROR "Buzzer timer channel is not configured in CubeMX")
+        endif()
+        if((_board STREQUAL "h723_mc02" AND _timer_name STREQUAL "tim3") OR
+           (_board STREQUAL "f407_cboard" AND _timer_name STREQUAL "tim10" AND _heater_enabled))
+            message(FATAL_ERROR "Buzzer must not share the BMI088 heater timer")
+        endif()
+    endif()
     config_resource(_referee_uart usart referee_uart)
     foreach(_remote IN ITEMS dr16 vt03 ps2)
         config_bool(_enable_${_remote} boards ${_board} remoter_${_remote}_enabled)
@@ -95,6 +113,9 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
         message(FATAL_ERROR "Referee and remoter must not share RX ownership")
     endif()
     if(_big_head_enabled)
+        if(NOT _usb_enabled)
+            message(FATAL_ERROR "big_head requires USB")
+        endif()
         if(NOT _board STREQUAL "h723_mc02" OR NOT _ahrs_device STREQUAL "bmi088")
             message(FATAL_ERROR "big_head requires h723_mc02 with BMI088 AHRS")
         endif()
@@ -117,6 +138,20 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
         if(_ps2_spi STREQUAL "bsp::spi::handle::none")
             message(FATAL_ERROR "PS2 requires a hardware SPI")
         endif()
+    endif()
+    if(NOT _rfid_uart STREQUAL "bsp::usart::config{}")
+        if(_rfid_uart STREQUAL _referee_uart OR _rfid_uart STREQUAL _ui_uart OR
+           (_enable_dr16 AND _rfid_uart STREQUAL _dr16_uart) OR
+           (_enable_vt03 AND _rfid_uart STREQUAL _vt03_uart))
+            message(FATAL_ERROR "RFID UART must not share UI/referee/remoter ownership")
+        endif()
+        string(JSON _uart_name GET "${_json}" boards ${_board} rfid_uart)
+        if(NOT _resources MATCHES "usart::config ${_uart_name}\\{[^}]+true")
+            message(FATAL_ERROR "RFID UART requires RX DMA")
+        endif()
+    endif()
+    if(_rfid_uart STREQUAL "bsp::usart::config{}" OR _buzzer_timer STREQUAL "bsp::pwm::config{}")
+        message(FATAL_ERROR "RFID service requires boards.${_board}.rfid_uart and buzzer_timer")
     endif()
     # Export the same validated choices to CMake for the selected board.
     if(_board STREQUAL BOARD)
@@ -142,6 +177,10 @@ inline constexpr imu::bmi088_thermal bmi088_thermal{@_thermal_target@, @_thermal
 inline constexpr bsp::can::config dmimu_can{bsp::can::handle::@_dm_bus@, bsp::can::id_type::standard};
 inline constexpr bsp::can::config motor_can{bsp::can::handle::@_motor_bus@, bsp::can::id_type::standard};
 inline constexpr bsp::can::config lower_can{bsp::can::handle::@_lower_bus@, bsp::can::id_type::standard};
+inline constexpr auto rfid_uart = @_rfid_uart@;
+inline constexpr buzzer::config rfid_buzzer{@_buzzer_timer@,
+    bsp::pwm::channel::ch@_buzzer_channel@, @_rfid_buzzer_period_us@,
+    @_rfid_buzzer_on_ms@, @_rfid_buzzer_gap_ms@};
 inline constexpr auto referee_uart = @_referee_uart@;
 inline constexpr bool remoter_dr16_enabled = @_enable_dr16@;
 inline constexpr bool remoter_vt03_enabled = @_enable_vt03@;

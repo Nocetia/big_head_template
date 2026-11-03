@@ -19,7 +19,6 @@ using pnxtypes::status;
 struct diagnostics
 {
     uint32_t control_overruns = 0;
-    uint32_t motor_tx_failures = 0;
     uint32_t lower_tx_failures = 0;
     uint32_t motor_restarts = 0;
     uint32_t lower_restarts = 0;
@@ -52,10 +51,10 @@ struct can_bytes
     uint8_t bytes[8]{};
 };
 
-// Only these short copies cross the IRQ/foreground boundary. Parsing and motor
-// methods run outside the critical section, in the control thread.
-sample<can_bytes> can_received[4];
-constexpr uint16_t motor_ids[]{cfg::friction_left_id, cfg::friction_right_id, cfg::pitch_id};
+// Lower-controller parsing runs outside the IRQ in the control thread. DJI feedback is buffered
+// by motor::dji::manager and consumed by the same thread.
+sample<can_bytes> lower_received;
+sample<bool> motor_received[3];
 
 struct uart_bytes
 {
@@ -125,24 +124,8 @@ friction_motor friction_left;
 friction_motor friction_right;
 motor::dji::gm6020 pitch;
 
-bool send_motor(void*, uint8_t bus, const motor::dji::frame_t& frame)
-{
-    if (bus != 0 || !motor_bus.ready)
-    {
-        return false;
-    }
-    const auto result =
-        bsp::can::transmit(motor_bus.resource.instance, frame.id, frame.data, frame.length);
-    if (result != status::ok)
-    {
-        ++diagnostic.motor_tx_failures;
-        return false;
-    }
-    motor_bus.last_tx_ms = HAL_GetTick();
-    return true;
-}
-
-motor::dji::manager motors{send_motor};
+motor::dji::manager motors;
+uint32_t motor_transmit_counts[2]{};
 msg::subscriber<imu::attitude::state> attitude_reader;
 sample<vision_command> vision_received;
 sample<vision_telemetry> telemetry;
@@ -195,43 +178,19 @@ control_parameters control_settings()
 
 void can_receive(bsp::can::handle bus, const bsp::can::rx_frame& frame)
 {
-    if (frame.len != 8 || frame.remote || frame.id_kind != bsp::can::id_type::standard ||
+    if (bus != lower_bus.resource.instance || frame.id != lower_status_id || frame.len != 8 ||
+        frame.remote || frame.id_kind != bsp::can::id_type::standard ||
         frame.format != bsp::can::frame_mode::classic)
-    {
-        return;
-    }
-    unsigned slot = 4;
-    if (bus == motor_bus.resource.instance)
-    {
-        for (unsigned i = 0; i < 3; ++i)
-        {
-            if (frame.id == motor_ids[i])
-            {
-                slot = i;
-                break;
-            }
-        }
-        if (slot == 4 || (uint16_t(frame.data[0]) << 8U | frame.data[1]) >= 8192)
-        {
-            return;
-        }
-    }
-    else if (bus == lower_bus.resource.instance && frame.id == lower_status_id)
-    {
-        slot = 3;
-    }
-    if (slot == 4)
     {
         return;
     }
     const auto now = HAL_GetTick();
     const auto mask = __get_PRIMASK();
     __disable_irq();
-    auto& received = can_received[slot];
-    std::memcpy(received.data.bytes, frame.data, sizeof(received.data.bytes));
-    received.received_ms = now;
-    ++received.sequence;
-    received.valid = true;
+    std::memcpy(lower_received.data.bytes, frame.data, sizeof(lower_received.data.bytes));
+    lower_received.received_ms = now;
+    ++lower_received.sequence;
+    lower_received.valid = true;
     __set_PRIMASK(mask);
 }
 
@@ -383,7 +342,6 @@ bool recover_can(can_bus& bus, bool motor, uint32_t now)
         }
         error = true;
     }
-    // A full TX FIFO can otherwise leave the last nonzero command queued forever.
     error = error || uint32_t(now - bus.last_tx_ms) >= cfg::motor_timeout_ms;
     if (error || !bus.ready)
     {
@@ -391,9 +349,16 @@ bool recover_can(can_bus& bus, bool motor, uint32_t now)
         bus.ready = false;
         const auto mask = __get_PRIMASK();
         __disable_irq();
-        for (unsigned i = motor ? 0 : 3; i < (motor ? 3U : 4U); ++i)
+        if (motor)
         {
-            can_received[i].valid = false;
+            for (auto& received : motor_received)
+            {
+                received.valid = false;
+            }
+        }
+        else
+        {
+            lower_received.valid = false;
         }
         __set_PRIMASK(mask);
         // Handle the first fault immediately, including non-bus-off notifications
@@ -448,7 +413,7 @@ void control_entry(ULONG)
     controller control{control_settings()};
     imu::attitude::state attitude;
     sample<lower_status> lower;
-    uint32_t consumed[4]{};
+    uint32_t lower_sequence = 0;
     uint32_t remote_sequences[2]{};
     for (auto& remote : remotes_rx)
     {
@@ -464,35 +429,38 @@ void control_entry(ULONG)
         const auto started_ms = HAL_GetTick();
         const bool motor_recovering = recover_can(motor_bus, true, started_ms);
         const bool lower_recovering = recover_can(lower_bus, false, started_ms);
-        sample<can_bytes> received[4];
+        sample<can_bytes> received;
         sample<vision_command> vision;
         {
             const auto mask = __get_PRIMASK();
             __disable_irq();
-            std::copy_n(can_received, 4, received);
+            received = lower_received;
             vision = vision_received;
             __set_PRIMASK(mask);
         }
+        const bool motor_updates[]{motors.update_feedback(friction_left),
+            motors.update_feedback(friction_right), motors.update_feedback(pitch)};
         for (unsigned i = 0; i < 3; ++i)
         {
-            if (received[i].valid && received[i].sequence != consumed[i])
+            if (motor_updates[i] && !motor_recovering)
             {
-                motors.receive(0, motor_ids[i], received[i].data.bytes);
-                consumed[i] = received[i].sequence;
+                motor_received[i].received_ms = started_ms;
+                ++motor_received[i].sequence;
+                motor_received[i].valid = true;
             }
         }
-        if (!received[3].valid)
+        if (!received.valid)
         {
             lower.valid = false;
         }
-        else if (received[3].sequence != consumed[3])
+        else if (received.sequence != lower_sequence)
         {
             lower_status value;
-            if (decode_lower_status(received[3].data.bytes, 8, value))
+            if (decode_lower_status(received.data.bytes, 8, value))
             {
-                lower = {value, received[3].received_ms, received[3].sequence, true};
+                lower = {value, received.received_ms, received.sequence, true};
             }
-            consumed[3] = received[3].sequence;
+            lower_sequence = received.sequence;
         }
         for (auto& remote : remotes_rx)
         {
@@ -537,11 +505,14 @@ void control_entry(ULONG)
         input.friction_left_speed = friction_left.fdb.velocity;
         input.friction_right_speed = friction_right.fdb.velocity;
         input.friction_left_online =
-            motor_bus.ready && !motor_recovering && fresh(received[0], now, cfg::motor_timeout_ms);
+            motor_bus.ready && !motor_recovering &&
+            fresh(motor_received[0], now, cfg::motor_timeout_ms);
         input.friction_right_online =
-            motor_bus.ready && !motor_recovering && fresh(received[1], now, cfg::motor_timeout_ms);
+            motor_bus.ready && !motor_recovering &&
+            fresh(motor_received[1], now, cfg::motor_timeout_ms);
         input.pitch_online =
-            motor_bus.ready && !motor_recovering && fresh(received[2], now, cfg::motor_timeout_ms);
+            motor_bus.ready && !motor_recovering &&
+            fresh(motor_received[2], now, cfg::motor_timeout_ms);
         const auto output = control.update(input);
 
         pitch.motor_mode =
@@ -561,7 +532,20 @@ void control_entry(ULONG)
             friction_right.speed_pid.reset_state(0.0f, friction_right.fdb.velocity);
         }
         motors.update();
-        motors.transmit(static_cast<uint32_t>(bsp::dwt::timeline_us()));
+        if (motor_bus.ready && !motor_recovering)
+        {
+            motors.transmit(static_cast<uint32_t>(bsp::dwt::timeline_us()));
+            const uint32_t counts[]{
+                motors.transmit_count(motor_bus.resource.instance, 0x200),
+                motors.transmit_count(motor_bus.resource.instance, 0x1FF)};
+            if (counts[0] != motor_transmit_counts[0] &&
+                counts[1] != motor_transmit_counts[1])
+            {
+                motor_transmit_counts[0] = counts[0];
+                motor_transmit_counts[1] = counts[1];
+                motor_bus.last_tx_ms = now;
+            }
+        }
         if (lower_bus.ready)
         {
             // Commands take priority over UI in FDCAN2's two-element TX FIFO.
@@ -649,22 +633,27 @@ void usb_entry(ULONG)
 extern "C" void app_start()
 {
     using namespace big_head;
+    const auto motor_handle = motor_bus.resource.instance;
     if (bsp::dwt::init() != status::ok ||
-        !motors.register_motor(friction_left, 0, cfg::friction_left_id) ||
-        !motors.register_motor(friction_right, 0, cfg::friction_right_id) ||
-        !motors.register_motor(pitch, 0, cfg::pitch_id))
+        !motors.register_motor(friction_left, motor_handle, cfg::friction_left_id) ||
+        !motors.register_motor(friction_right, motor_handle, cfg::friction_right_id) ||
+        !motors.register_motor(pitch, motor_handle, cfg::pitch_id))
     {
         Error_Handler();
         return;
     }
     motors.set_period(cfg::control_period_ms * 0.001f);
-    motors.set_tx_period(0, 0x200, cfg::control_period_ms * 1000);
-    motors.set_tx_period(0, 0x1FF, cfg::control_period_ms * 1000);
+    if (!motors.set_tx_period(motor_handle, 0x200, cfg::control_period_ms * 1000) ||
+        !motors.set_tx_period(motor_handle, 0x1FF, cfg::control_period_ms * 1000) ||
+        bsp::can::register_rx_callback(lower_bus.resource.instance,
+            bsp::can::rx_callback::bind<can_receive>()) != status::ok)
+    {
+        Error_Handler();
+        return;
+    }
     for (auto* bus : {&motor_bus, &lower_bus})
     {
-        if (bsp::can::register_rx_callback(bus->resource.instance,
-                bsp::can::rx_callback::bind<can_receive>()) != status::ok ||
-            bsp::can::init(bus->resource) != status::ok)
+        if (bsp::can::init(bus->resource) != status::ok)
         {
             Error_Handler();
             return;

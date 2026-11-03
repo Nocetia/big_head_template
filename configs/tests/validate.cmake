@@ -28,12 +28,15 @@ if(DEFINED TEST_CASE)
         string(JSON _json SET "${_json}" boards h723_mc02 ahrs_device "\"dmimu\"")
     elseif(TEST_CASE STREQUAL "fractional_trigger")
         string(JSON _json SET "${_json}" application big_head trigger_reverse "-8.5")
+    elseif(TEST_CASE STREQUAL "usb_disabled")
+        string(JSON _json SET "${_json}" usb enabled "false")
     elseif(NOT TEST_CASE STREQUAL "h723_mc02" AND NOT TEST_CASE STREQUAL "f407_cboard")
         message(FATAL_ERROR "Unknown test case: ${TEST_CASE}")
     endif()
 
     set(BOARD "${TEST_CASE}")
     include("${_config_dir}/scripts/values.cmake")
+    include("${_config_dir}/scripts/communication.cmake")
     include("${_config_dir}/scripts/application.cmake")
     include("${_config_dir}/scripts/boards.cmake")
     if(TEST_CASE STREQUAL "h723_mc02" AND NOT USER_BIG_HEAD_APP EQUAL 1)
@@ -47,7 +50,7 @@ endif()
 
 foreach(_case IN ITEMS h723_mc02 f407_cboard can_conflict unsupported_can duplicate_motor
         wrong_period pid_shape pitch_current pitch_range filter_noise vt03_disabled
-        referee_conflict wrong_imu fractional_trigger)
+        referee_conflict wrong_imu fractional_trigger usb_disabled)
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DTEST_CASE=${_case}"
         -P "${CMAKE_CURRENT_LIST_FILE}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -59,4 +62,4 @@ foreach(_case IN ITEMS h723_mc02 f407_cboard can_conflict unsupported_can duplic
         message(FATAL_ERROR "${_case} unexpectedly passed")
     endif()
 endforeach()
-message(STATUS "Configuration validation: 2 valid boards and 12 invalid cases passed")
+message(STATUS "Configuration validation: 2 valid boards and 13 invalid cases passed")

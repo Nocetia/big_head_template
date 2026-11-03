@@ -11,12 +11,13 @@
 | `libs` | 数学、控制、消息、CRC 等基础设施 |
 | `devices` | 由应用驱动的 LED、电机、遥控器和裁判 UI，不创建后台线程 |
 | `modules/imu` | BMI088/DMIMU 采集服务、姿态输出、ESKF 和 BMI088 温控 |
+| `modules/rfid` | 默认启动的 RFID data 读取、蜂鸣提示和遥控输入限制 |
 | `modules/referee` | 裁判接收线程、协议解析、类型缓存和可选类型回调 |
 | `configs` | 用户 JSON 配置及生成脚本、生成头文件 |
 | `applications/big_head` | H723 云台应用：VT03/DR16 输入、USB 视觉、BMI088、Pitch/双摩擦轮及下位机通信 |
 
-根工程链接 `modules`，通过它引入设备、BSP 和基础库。配置和链接不会自动启动服务；
-应用在硬件与 ThreadX 初始化后组织启动顺序，并负责业务策略。
+根工程链接 `modules`，通过它引入设备、BSP 和基础库。固件在链接时接入 ThreadX 初始化入口，默认创建 RFID 读取线程；BSP 保持原有实现；
+其他服务仍由应用显式启动。RFID 的遥控限制在设备解码层执行，应用无需检查权限标志。
 
 H723 默认启用 [`big_head` 应用](applications/big_head/README.md)，由其 `app_start()` 显式启动 BMI088
 并创建控制和 USB 发送线程。拨弹盘与 yaw 电机由下位机执行，本板通过 CAN 发送控制命令。
@@ -123,3 +124,5 @@ cmake --build --preset h723_mc02
 
 构建 F407 时将上述两个命令中的 preset 名称改为 `f407_cboard`。
 构建产物位于 `build/<preset名称>/`，编译数据库由 CMake 自动生成，供其他工具按需使用。
+
+RFID 默认读取线程及底层遥控限制见 [RFID 服务](modules/README.md#rfid)。

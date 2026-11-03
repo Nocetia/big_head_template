@@ -1,4 +1,5 @@
 # UI 与 PS2 的发送超时和输入死区。
+config_bool(_usb_enabled usb enabled)
 config_integer(_ui_timeout 0 2147483647 ui timeout_ms)
 config_number(_deadzone 0 1 ps2 deadzone)
 if(_deadzone GREATER_EQUAL 1)
@@ -8,6 +9,20 @@ if(NOT _deadzone MATCHES "[.eE]")
     string(APPEND _deadzone ".0")
 endif()
 config_integer(_spi_timeout 1 2147483647 ps2 spi_timeout_ms)
+
+# RFID read-only service parameters.
+config_integer(_rfid_address 0 255 rfid address)
+config_integer(_rfid_block 1 62 rfid block)
+math(EXPR _rfid_trailer "${_rfid_block} % 4")
+if(_rfid_trailer EQUAL 3)
+    message(FATAL_ERROR "rfid.block: expected an ordinary S50 data block")
+endif()
+config_integer(_rfid_baud 1200 1000000 rfid baud)
+config_integer(_rfid_priority 1 31 rfid priority)
+config_integer(_rfid_stack_size 2048 16384 rfid stack_size)
+foreach(_key IN ITEMS startup_ms poll_ms timeout_ms recovery_ms buzzer_period_us buzzer_on_ms buzzer_gap_ms)
+    config_integer(_rfid_${_key} 1 60000 rfid ${_key})
+endforeach()
 
 # 裁判接收与应用遥控处理的调度参数。
 config_integer(_remoter_stack 1024 16384 remoter stack_size)

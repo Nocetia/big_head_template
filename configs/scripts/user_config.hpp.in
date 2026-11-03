@@ -7,12 +7,18 @@
 #include "dmimu.hpp"
 #include "bmi088.hpp"
 #include "referee.hpp"
+#include "buzzer.hpp"
 
 namespace user_config
 {
 @_boards@#else
 #error Unsupported board
 #endif
+
+namespace usb
+{
+inline constexpr bool enabled = @_usb_enabled@;
+} // namespace usb
 
 inline constexpr imu::bmi088_heater_config bmi088_heater{
     @_heater_period_ms@, @_heater_timeout_ms@,
@@ -144,3 +150,17 @@ inline constexpr bsp::usart::line_config vt03_line{115200, bsp::usart::word_leng
 inline constexpr float ps2_deadzone = @_deadzone@f;
 inline constexpr uint32_t ps2_spi_timeout_ms = @_spi_timeout@;
 } // namespace user_config
+
+namespace user_config::rfid
+{
+inline constexpr uint8_t address = @_rfid_address@;
+inline constexpr uint8_t block = @_rfid_block@;
+inline constexpr uint32_t baud = @_rfid_baud@;
+inline constexpr uint32_t priority = @_rfid_priority@;
+inline constexpr uint32_t stack_size = @_rfid_stack_size@;
+inline constexpr uint32_t startup_ms = @_rfid_startup_ms@;
+inline constexpr uint32_t poll_ms = @_rfid_poll_ms@;
+inline constexpr uint32_t timeout_ms = @_rfid_timeout_ms@;
+inline constexpr uint32_t recovery_ms = @_rfid_recovery_ms@;
+inline constexpr auto buzzer = user_config::rfid_buzzer;
+} // namespace user_config::rfid

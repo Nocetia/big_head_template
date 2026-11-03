@@ -11,6 +11,8 @@
     "C_Cpp.intelliSenseEngine": "default",
     "C_Cpp.formatting": "clangFormat",
     "C_Cpp.clang_format_style": "file",
+    "git.detectSubmodules": true,
+    "git.autoRepositoryDetection": true,
     "[c]": {
         "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.formatOnSave": true
@@ -18,6 +20,5 @@
     "[cpp]": {
         "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.formatOnSave": true
-    },
-    
+    }
 }
