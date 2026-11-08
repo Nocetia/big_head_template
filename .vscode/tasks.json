@@ -11,18 +11,19 @@
       "args": [
         "-NoProfile",
         "-Command",
-        "$target = if ('${input:board}' -eq 'h723_mc02') { 'stm32h7x' } else { 'stm32f4x' }; $elf = Join-Path '${workspaceFolder}' 'build/${input:board}/embedded_framework.elf'; if (-not (Test-Path -LiteralPath $elf)) { Write-Error \"Firmware not found: $elf. Build the selected board first.\"; exit 1 }; & openocd -f '${input:probe}' -f \"target/$target.cfg\" -c \"program {$elf} verify reset exit\"; exit $LASTEXITCODE"
+        "$target = if ('${input:firmware}' -like 'h723_*') { 'stm32h7x' } else { 'stm32f4x' }; $elf = Join-Path '${workspaceFolder}' 'build/${input:firmware}/embedded_framework.elf'; if (-not (Test-Path -LiteralPath $elf)) { Write-Error \"Firmware not found: $elf. Build the selected preset first.\"; exit 1 }; & openocd -f '${input:probe}' -f \"target/$target.cfg\" -c \"program {$elf} verify reset exit\"; exit $LASTEXITCODE"
       ],
       "problemMatcher": []
     }
   ],
   "inputs": [
     {
-      "id": "board",
+      "id": "firmware",
       "type": "pickString",
-      "description": "选择板卡",
+      "description": "选择固件",
       "options": [
         "h723_mc02",
+        "h723_smc_test",
         "f407_cboard"
       ]
     },

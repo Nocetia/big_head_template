@@ -12,10 +12,87 @@
       "id": "plot-1",
       "name": "曲线 1",
       "groupId": "default",
-      "seconds": 10
+      "seconds": 3.276800000000001
     }
   ],
-  "variables": [],
+  "variables": [
+    {
+      "expression": "imu::attitude::output.data_.quaternion.w",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.quaternion.x",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.quaternion.y",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.quaternion.z",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.gyro.z",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.accel.z",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.yaw",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.total_yaw",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.zero_rate_active",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.gyro_bias.z",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::yaw_debug.reference",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::yaw_debug.feedback",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::yaw_debug.current",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::yaw_debug.sequence",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::bmi088_sampling_debug.rate_hz",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::bmi088_sampling_debug.period_us",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::bmi088_sampling_debug.window_samples",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.roll",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "imu::attitude::output.data_.pitch",
+      "plotId": "plot-1"
+    }
+  ],
   "activeGroup": "default",
   "columns": 2,
   "seconds": 10,

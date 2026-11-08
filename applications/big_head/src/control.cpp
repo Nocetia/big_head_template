@@ -5,6 +5,11 @@
 #include <cstring>
 #include <limits>
 
+/*
+debug可以看：diagnostic, motor_received, lower_received, remoter
+attitude_reader， vision_received， telemetry
+*/
+
 namespace big_head
 {
 namespace
@@ -58,7 +63,7 @@ controller::controller(const control_parameters& parameters)
 {
 }
 
-float controller::scalar_filter::update(float sample, const float parameters[2])
+float controller::scalar_filter::update(float sample, const float parameters[2])//改成一阶kalman，不要这么写
 {
     const float predicted_covariance = covariance + parameters[0];
     const float gain = predicted_covariance / (predicted_covariance + parameters[1]);

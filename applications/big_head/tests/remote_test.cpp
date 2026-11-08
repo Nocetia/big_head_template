@@ -2,6 +2,7 @@
 #include "crc.hpp"
 #include "dji_manager.hpp"
 #include "gm6020.hpp"
+#include "m3508.hpp"
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -159,21 +160,22 @@ void test_uart_streams()
         "DR16 switch normalization matches old control modes");
 }
 
-class friction : public motor::dji::motor
-{
-public:
-    friction() : motor({1, 15000, 15000, 100, 8192})
-    {
-    }
-};
-
 void test_motor_model()
 {
-    friction left;
-    friction right;
+    motor::dji::m3508 left{motor::dji::m3508::gear_ratio::direct_drive};
+    motor::dji::m3508 right{motor::dji::m3508::gear_ratio::direct_drive};
+    motor::dji::m3508 standard;
+    motor::dji::m3508 xroll{motor::dji::m3508::gear_ratio::xroll_gearbox};
     motor::dji::gm6020 pitch;
     motor::dji::manager motors;
     const auto bus = bsp::can::handle::fdcan1;
+    const float direct_ratio = left.configuration().gear_ratio;
+    const float standard_ratio = standard.configuration().gear_ratio;
+    const float xroll_ratio = xroll.configuration().gear_ratio;
+    require(std::fabs(direct_ratio - 1.0f) < 0.0001f &&
+                std::fabs(standard_ratio - 3591.0f / 187.0f) < 0.0001f &&
+                std::fabs(xroll_ratio - 268.0f / 17.0f) < 0.0001f,
+        "M3508 exposes direct, standard, and XRoll gear ratios");
     require(motors.register_motor(left, bus, 0x201) &&
                 motors.register_motor(right, bus, 0x202) &&
                 motors.register_motor(pitch, bus, 0x205) &&
@@ -217,15 +219,11 @@ void test_motor_model()
         "friction current signs preserved in big-endian slots");
     require(test_can::frames[1].data[0] == 0x3A && test_can::frames[1].data[1] == 0x98,
         "pitch output clamped to 15000 by existing driver");
-    require(motors.transmit_count(bus, 0x200) == 1 &&
-                motors.transmit_count(bus, 0x1FF) == 1,
-        "successful command groups are visible to the application watchdog");
     test_can::count = 0;
     test_can::failing_id = 0x1FF;
     motors.transmit(1000);
-    require(motors.transmit_count(bus, 0x200) == 2 &&
-                motors.transmit_count(bus, 0x1FF) == 1,
-        "a busy CAN group does not advance its successful-transmit count");
+    require(test_can::count == 1 && test_can::frames[0].id == 0x200,
+        "a busy CAN group does not block the other command group");
     test_can::count = 0;
     test_can::failing_id = 0;
     left.motor_mode = motor::mode::relax;
@@ -233,8 +231,8 @@ void test_motor_model()
     pitch.motor_mode = motor::mode::relax;
     motors.update();
     motors.transmit(2000);
-    require(test_can::count == 2 && motors.transmit_count(bus, 0x200) == 3 &&
-                motors.transmit_count(bus, 0x1FF) == 2,
+    require(test_can::count == 2 && test_can::frames[0].id == 0x200 &&
+                test_can::frames[1].id == 0x1FF,
         "a failed command group is retried on the next control tick");
     for (unsigned i = 0; i < test_can::count; ++i)
     {

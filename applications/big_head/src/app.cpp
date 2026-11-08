@@ -6,6 +6,7 @@
 #include "bsp_usb.hpp"
 #include "dji_manager.hpp"
 #include "gm6020.hpp"
+#include "m3508.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -28,6 +29,17 @@ struct diagnostics
 };
 
 diagnostics diagnostic;
+
+// Single-writer control snapshot for the debugger; angles are rad, current is protocol units.
+struct yaw_debug_state
+{
+    float reference = 0.0f;
+    float feedback = 0.0f;
+    int16_t current = 0;
+    uint32_t sequence = 0;
+};
+
+yaw_debug_state yaw_debug;
 
 namespace
 {
@@ -85,7 +97,7 @@ memory::buffer<64> vt03_dma RAM_D1_BSS;
 bsp::usart::line_config vt03_line()
 {
     auto line = user_config::vt03_line;
-    line.baud_rate = cfg::vt03_baud_rate;
+    line.baud_rate = cfg::vt03_baud_rate;//这里转了一下从默认的115200到921600
     return line;
 }
 
@@ -99,37 +111,28 @@ struct can_bus
 {
     bsp::can::config resource;
     uint32_t last_attempt_ms = 0;
-    uint32_t last_tx_ms = 0;
     bool ready = false;
 };
 
 can_bus motor_bus{user_config::motor_can};
 can_bus lower_bus{user_config::lower_can};
 
-// The old friction wheels use rotor speed (GearBox_None). This application-only
-// model uses the existing DJI implementation without changing the geared M3508.
-class friction_motor final : public motor::dji::motor
-{
-public:
-    friction_motor()
-        : motor({cfg::friction_gear_ratio, 15000, cfg::friction_velocity_pid[3], 100.0f, 8192})
-    {
-        speed_pid = control::pid(cfg::friction_velocity_pid[0], cfg::friction_velocity_pid[1],
-            cfg::friction_velocity_pid[2], cfg::friction_velocity_pid[3],
-            cfg::friction_velocity_pid[4]);
-    }
-};
-
-friction_motor friction_left;
-friction_motor friction_right;
+motor::dji::m3508 friction_left{motor::dji::m3508::gear_ratio::direct_drive};
+motor::dji::m3508 friction_right{motor::dji::m3508::gear_ratio::direct_drive};
 motor::dji::gm6020 pitch;
 
 motor::dji::manager motors;
-uint32_t motor_transmit_counts[2]{};
 msg::subscriber<imu::attitude::state> attitude_reader;
 sample<vision_command> vision_received;
 sample<vision_telemetry> telemetry;
 vision_parser vision_decoder;
+
+void configure_friction_motor(motor::dji::m3508& instance)
+{
+    instance.speed_pid = control::pid(cfg::friction_velocity_pid[0],
+        cfg::friction_velocity_pid[1], cfg::friction_velocity_pid[2],
+        cfg::friction_velocity_pid[3], cfg::friction_velocity_pid[4]);
+}
 
 TX_THREAD control_thread;
 TX_THREAD usb_thread;
@@ -147,7 +150,7 @@ control_parameters control_settings()
     std::copy_n(cfg::pitch_feedforward, 4, result.pitch_feedforward);
     std::copy_n(cfg::manual_yaw_filter, 2, result.manual_yaw_filter);
     std::copy_n(cfg::manual_pitch_filter, 2, result.manual_pitch_filter);
-    std::copy_n(cfg::vision_filter, 2, result.vision_filter);
+    std::copy_n(cfg::vision_filter, 2, result.vision_filter);//气死爸爸了，manual pitch的参数不对
     result.yaw_current_limit = cfg::yaw_current_limit;
     result.pitch_current_limit = cfg::pitch_current_limit;
     result.pitch_current_scale = cfg::pitch_current_scale;
@@ -159,15 +162,15 @@ control_parameters control_settings()
     result.manual_angle_scale = cfg::manual_angle_scale;
     result.mouse_yaw_scale = cfg::mouse_yaw_scale;
     result.mouse_pitch_scale = cfg::mouse_pitch_scale;
-    result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;
+    result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;//这是什么
     result.friction_speed = cfg::friction_speed;
     result.friction_ready_ratio = cfg::friction_ready_ratio;
     result.friction_drop = cfg::friction_drop;
     result.heat_fraction = cfg::heat_fraction;
-    result.fire_angle_tolerance = cfg::fire_angle_tolerance;
+    result.fire_angle_tolerance = cfg::fire_angle_tolerance;//开火区间
     result.trigger_low = cfg::trigger_low;
     result.trigger_high = cfg::trigger_high;
-    result.trigger_continuous = cfg::trigger_continuous;
+    result.trigger_continuous = cfg::trigger_continuous;//trgger_spd
     result.trigger_reverse = cfg::trigger_reverse;
     result.auto_fire_timeout_ms = cfg::auto_fire_timeout_ms;
     result.auto_aim_default = cfg::auto_aim_default;
@@ -342,7 +345,6 @@ bool recover_can(can_bus& bus, bool motor, uint32_t now)
         }
         error = true;
     }
-    error = error || uint32_t(now - bus.last_tx_ms) >= cfg::motor_timeout_ms;
     if (error || !bus.ready)
     {
         const bool first_fault = bus.ready;
@@ -367,7 +369,6 @@ bool recover_can(can_bus& bus, bool motor, uint32_t now)
         {
             bus.last_attempt_ms = now;
             bus.ready = bsp::can::restart(bus.resource.instance) == status::ok;
-            bus.last_tx_ms = now;
             if (motor)
             {
                 ++diagnostic.motor_restarts;
@@ -388,7 +389,7 @@ vision_telemetry make_telemetry(const imu::attitude::state& attitude, const cont
     vision_telemetry result;
     result.detect_color = !input.lower.color;
     result.mode = 1;
-    result.yaw = input.total_yaw * 180.0f / math::pi;
+    result.yaw = input.total_yaw * 180.0f / math::pi;//usb发出去的，所以角度
     result.pitch = input.pitch * 180.0f / math::pi;
     result.gyro_pitch = input.gyro_pitch;
     result.gyro_yaw = input.gyro_yaw;
@@ -490,8 +491,8 @@ void control_entry(ULONG)
         input.pitch = attitude.roll;
         input.yaw = attitude.yaw;
         input.total_yaw = attitude.total_yaw;
-        input.gyro_pitch = attitude.gyro.x;
-        input.gyro_yaw = attitude.gyro.z;
+        input.gyro_pitch = attitude.gyro.x;//pitch是x
+        input.gyro_yaw = attitude.gyro.z;//yaw是z
         input.imu_valid = attitude.online && attitude.stage == imu::attitude::phase::running &&
                           uint32_t(now - attitude.received_ms) < cfg::imu_timeout_ms &&
                           std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
@@ -514,6 +515,10 @@ void control_entry(ULONG)
             motor_bus.ready && !motor_recovering &&
             fresh(motor_received[2], now, cfg::motor_timeout_ms);
         const auto output = control.update(input);
+        yaw_debug.reference = output.yaw_reference;
+        yaw_debug.feedback = input.total_yaw;
+        yaw_debug.current = output.lower.yaw_cur;
+        ++yaw_debug.sequence;
 
         pitch.motor_mode =
             output.mode == gimbal_mode::relax ? motor::mode::relax : motor::mode::current;
@@ -535,16 +540,6 @@ void control_entry(ULONG)
         if (motor_bus.ready && !motor_recovering)
         {
             motors.transmit(static_cast<uint32_t>(bsp::dwt::timeline_us()));
-            const uint32_t counts[]{
-                motors.transmit_count(motor_bus.resource.instance, 0x200),
-                motors.transmit_count(motor_bus.resource.instance, 0x1FF)};
-            if (counts[0] != motor_transmit_counts[0] &&
-                counts[1] != motor_transmit_counts[1])
-            {
-                motor_transmit_counts[0] = counts[0];
-                motor_transmit_counts[1] = counts[1];
-                motor_bus.last_tx_ms = now;
-            }
         }
         if (lower_bus.ready)
         {
@@ -553,13 +548,12 @@ void control_entry(ULONG)
             if (bsp::can::transmit(lower_bus.resource.instance, lower_command_id, command.data(),
                     command.size()) == status::ok)
             {
-                lower_bus.last_tx_ms = now;
                 const auto ui = encode_lower_ui(output.ui);
                 if (bsp::can::transmit(lower_bus.resource.instance, lower_ui_id, ui.data(),
                         ui.size()) != status::ok)
                 {
                     ++diagnostic.lower_tx_failures;
-                }
+                }//
             }
             else
             {
@@ -633,6 +627,8 @@ void usb_entry(ULONG)
 extern "C" void app_start()
 {
     using namespace big_head;
+    configure_friction_motor(friction_left);
+    configure_friction_motor(friction_right);
     const auto motor_handle = motor_bus.resource.instance;
     if (bsp::dwt::init() != status::ok ||
         !motors.register_motor(friction_left, motor_handle, cfg::friction_left_id) ||
@@ -659,8 +655,7 @@ extern "C" void app_start()
             return;
         }
         bus->ready = true;
-        bus->last_tx_ms = HAL_GetTick();
-        bus->last_attempt_ms = bus->last_tx_ms - cfg::recovery_period_ms;
+        bus->last_attempt_ms = HAL_GetTick() - cfg::recovery_period_ms;
     }
     if (bsp::usb::on_rx(bsp::usb::rx_callback::bind<usb_receive>()) != status::ok ||
         imu::start_bmi088() != status::ok)

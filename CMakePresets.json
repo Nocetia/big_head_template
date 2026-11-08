@@ -14,6 +14,14 @@
             "cacheVariables": { "BOARD": "h723_mc02" }
         },
         {
+            "name": "h723_smc_test",
+            "inherits": "base",
+            "cacheVariables": {
+                "BOARD": "h723_mc02",
+                "USER_TEST": "ON"
+            }
+        },
+        {
             "name": "f407_cboard",
             "inherits": "base",
             "cacheVariables": { "BOARD": "f407_cboard" }
@@ -21,6 +29,7 @@
     ],
     "buildPresets": [
         { "name": "h723_mc02", "configurePreset": "h723_mc02" },
+        { "name": "h723_smc_test", "configurePreset": "h723_smc_test" },
         { "name": "f407_cboard", "configurePreset": "f407_cboard" }
     ]
 }

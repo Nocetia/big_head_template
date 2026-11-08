@@ -8,11 +8,37 @@
       "servertype": "openocd",
       "serverpath": "openocd",
       "cwd": "${workspaceFolder}",
-    //   "executable": "${workspaceFolder}/build/h723_mc02/embedded_framework.elf",
-      "executable": "${workspaceFolder}/build/h723_smc_test/embedded_framework.elf",
-
+      "executable": "${workspaceFolder}/build/h723_mc02/embedded_framework.elf",
       "configFiles": [
         "interface/cmsis-dap.cfg",
+        "target/stm32h7x.cfg"
+      ],
+      "runToEntryPoint": "main"
+    },
+    {
+      "name": "h723_smc_test DAP",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "serverpath": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/h723_smc_test/embedded_framework.elf",
+      "configFiles": [
+        "interface/cmsis-dap.cfg",
+        "target/stm32h7x.cfg"
+      ],
+      "runToEntryPoint": "main"
+    },
+    {
+      "name": "h723_smc_test ST-Link",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "serverpath": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/h723_smc_test/embedded_framework.elf",
+      "configFiles": [
+        "interface/stlink.cfg",
         "target/stm32h7x.cfg"
       ],
       "runToEntryPoint": "main"

@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstdint>
 volatile float target_velocity_debug = 1.0f;
+volatile float debug_velocity_fdb = 0.0f;
+
 namespace smc_motor_test
 {
 namespace cfg
@@ -19,10 +21,9 @@ inline constexpr uint16_t command_id = 0x200;
 inline constexpr uint32_t control_period_ms = 1;
 inline constexpr float control_period_s = control_period_ms * 0.001f;
 inline constexpr uint32_t feedback_timeout_ms = 100;
-inline constexpr uint32_t transmit_timeout_ms = 100;
 inline constexpr uint32_t recovery_period_ms = 100;
 inline constexpr uint32_t arming_delay_ms = 500;
-inline constexpr float target_velocity = 4.0f; // M3508 output shaft, rad/s.
+inline constexpr float target_velocity = 1.0f; // M3508 output shaft, rad/s.
 inline constexpr float current_limit = 1500.0f; // C620 protocol units.
 inline constexpr UINT thread_priority = 4;
 inline constexpr ULONG thread_stack_size = 2048;
@@ -55,11 +56,11 @@ struct diagnostics
     float smc_output = 0.0f;
     int16_t current_command = 0;
     uint32_t feedback_updates = 0;
-    uint32_t transmit_count = 0;
     uint32_t restart_attempts = 0;
     uint32_t overruns = 0;
     bool feedback_online = false;
     bool armed = false;
+    float cur_fdb = 0.0f;
 };
 
 diagnostics diagnostic;
@@ -79,16 +80,14 @@ void control_entry(ULONG)
     const auto bus = user_config::motor_can.instance;
     uint32_t last_feedback_ms = 0;
     uint32_t online_since_ms = 0;
-    uint32_t last_tx_ms = HAL_GetTick();
-    uint32_t last_restart_ms = last_tx_ms - cfg::recovery_period_ms;
-    uint32_t transmit_count = motors.transmit_count(bus, cfg::command_id);
+    uint32_t last_restart_ms = HAL_GetTick() - cfg::recovery_period_ms;
     bool feedback_valid = false;
     bool bus_ready = true;
     ULONG deadline = tx_time_get();
 
     for (;;)
     {
-        target_velocity=0;
+        // target_velocity=0;
         const auto now = HAL_GetTick();
         bool bus_error = bsp::can::current_status(bus) != status::ok;
         auto* errors = bsp::can::err_sem(bus);
@@ -100,7 +99,7 @@ void control_entry(ULONG)
             }
             bus_error = true;
         }
-        if (bus_error || uint32_t(now - last_tx_ms) >= cfg::transmit_timeout_ms)
+        if (bus_error)
         {
             bus_ready = false;
             feedback_valid = false;
@@ -113,7 +112,6 @@ void control_entry(ULONG)
             bus_ready = bsp::can::restart(bus) == status::ok;
             if (bus_ready)
             {
-                last_tx_ms = now;
                 // Do not let a frame buffered before the restart participate in re-arming.
                 (void)motors.update_feedback(wheel);
             }
@@ -142,7 +140,7 @@ void control_entry(ULONG)
         if (armed)
         {
             smc_output = controller.update_velocity(
-                target_velocity, wheel.fdb.velocity, cfg::control_period_s);
+                target_velocity_debug , wheel.fdb.velocity, cfg::control_period_s);
             if (controller.state().valid)
             {
                 current_command = static_cast<int16_t>(std::lround(smc_output));
@@ -166,19 +164,14 @@ void control_entry(ULONG)
         if (bus_ready)
         {
             motors.transmit(static_cast<uint32_t>(bsp::dwt::timeline_us()));
-            const auto next_count = motors.transmit_count(bus, cfg::command_id);
-            if (next_count != transmit_count)
-            {
-                transmit_count = next_count;
-                last_tx_ms = now;
-            }
         }
 
         diagnostic.velocity = wheel.fdb.velocity;
+        debug_velocity_fdb=wheel.fdb.velocity;
+        diagnostic.cur_fdb = wheel.fdb.torque_current_raw;
         diagnostic.surface = controller.state().surface;
         diagnostic.smc_output = smc_output;
         diagnostic.current_command = current_command;
-        diagnostic.transmit_count = transmit_count;
         diagnostic.feedback_online = feedback_valid;
         diagnostic.armed = armed;
 

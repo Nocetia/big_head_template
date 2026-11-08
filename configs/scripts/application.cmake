@@ -23,6 +23,9 @@ if(_app_pitch_id EQUAL _app_friction_left_id OR
    _app_friction_left_id EQUAL _app_friction_right_id)
     message(FATAL_ERROR "application.big_head: motor feedback IDs must be unique")
 endif()
+math(EXPR _app_pitch_id_hex "${_app_pitch_id}" OUTPUT_FORMAT HEXADECIMAL)
+math(EXPR _app_friction_left_id_hex "${_app_friction_left_id}" OUTPUT_FORMAT HEXADECIMAL)
+math(EXPR _app_friction_right_id_hex "${_app_friction_right_id}" OUTPUT_FORMAT HEXADECIMAL)
 
 # PID tuples: kp, ki, kd, max_out, max_iout. Gains include the 1 ms sample period.
 foreach(_pid IN ITEMS yaw_position yaw_velocity pitch_position pitch_velocity friction_velocity)
@@ -50,7 +53,6 @@ config_float(_app_manual_angle_scale 0 1 application big_head manual_angle_scale
 config_float(_app_mouse_yaw_scale 0 1 application big_head mouse_yaw_scale)
 config_float(_app_mouse_pitch_scale 0 1 application big_head mouse_pitch_scale)
 config_float(_app_keyboard_slew_per_tick 0.000001 1 application big_head keyboard_slew_per_tick)
-config_float(_app_friction_gear_ratio 0.001 1000 application big_head friction_gear_ratio)
 config_float(_app_friction_speed 0.001 3000 application big_head friction_speed)
 config_float(_app_friction_ready_ratio 0.001 1 application big_head friction_ready_ratio)
 config_float(_app_friction_drop 0.001 3000 application big_head friction_drop)
