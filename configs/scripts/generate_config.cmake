@@ -8,7 +8,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/values.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/communication.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/imu.cmake")
 config_vector3(_imu_offset application imu_offset)
-include("${CMAKE_CURRENT_LIST_DIR}/application.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/boards.cmake")
 
 # 全部校验通过后才写文件；内容不变时保留时间戳。

@@ -5,7 +5,6 @@
 #include "main.h"
 #include "smc.hpp"
 #include "tx_api.h"
-#include "user_config.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -16,6 +15,8 @@ namespace smc_motor_test
 {
 namespace cfg
 {
+inline constexpr bsp::can::config motor_can{
+    bsp::can::handle::fdcan1, bsp::can::id_type::standard};
 inline constexpr uint16_t feedback_id = 0x201;
 inline constexpr uint16_t command_id = 0x200;
 inline constexpr uint32_t control_period_ms = 1;
@@ -77,7 +78,7 @@ alignas(8) uint8_t control_stack[cfg::thread_stack_size];
 void control_entry(ULONG)
 {
     using pnxtypes::status;
-    const auto bus = user_config::motor_can.instance;
+    const auto bus = cfg::motor_can.instance;
     uint32_t last_feedback_ms = 0;
     uint32_t online_since_ms = 0;
     uint32_t last_restart_ms = HAL_GetTick() - cfg::recovery_period_ms;
@@ -196,12 +197,12 @@ void control_entry(ULONG)
 extern "C" void app_start()
 {
     using namespace smc_motor_test;
-    const auto bus = user_config::motor_can.instance;
+    const auto bus = cfg::motor_can.instance;
     if (bus == bsp::can::handle::none || bsp::dwt::init() != pnxtypes::status::ok ||
         !controller.configure(controller_config()) ||
         !motors.register_motor(wheel, bus, cfg::feedback_id) ||
         !motors.set_tx_period(bus, cfg::command_id, cfg::control_period_ms * 1000) ||
-        bsp::can::init(user_config::motor_can) != pnxtypes::status::ok)
+        bsp::can::init(cfg::motor_can) != pnxtypes::status::ok)
     {
         Error_Handler();
         return;

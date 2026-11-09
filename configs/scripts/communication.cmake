@@ -1,5 +1,6 @@
 # UI 与 PS2 的发送超时和输入死区。
 config_bool(_usb_enabled usb enabled)
+set(USER_USB_ENABLED ${_usb_enabled})
 config_integer(_ui_timeout 0 2147483647 ui timeout_ms)
 config_number(_deadzone 0 1 ps2 deadzone)
 if(_deadzone GREATER_EQUAL 1)

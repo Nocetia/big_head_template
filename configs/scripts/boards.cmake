@@ -31,18 +31,9 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
         set(_condition "#elif defined(STM32F407xx)")
         set(_can_names "^(none|can[12])$")
     endif()
-    foreach(_bus IN ITEMS dmimu motor lower)
-        string(JSON _${_bus}_bus GET "${_json}" boards ${_board} ${_bus}_can)
-        if(NOT _${_bus}_bus MATCHES "${_can_names}")
-            message(FATAL_ERROR "boards.${_board}.${_bus}_can: unsupported CAN resource")
-        endif()
-    endforeach()
-    set(_dm_bus "${_dmimu_bus}")
-    config_bool(_big_head_enabled boards ${_board} big_head_enabled)
-    if(_big_head_enabled)
-        set(_big_head_app 1)
-    else()
-        set(_big_head_app 0)
+    string(JSON _dm_bus GET "${_json}" boards ${_board} dmimu_can)
+    if(NOT _dm_bus MATCHES "${_can_names}")
+        message(FATAL_ERROR "boards.${_board}.dmimu_can: unsupported CAN resource")
     endif()
     string(JSON _ahrs_device GET "${_json}" boards ${_board} ahrs_device)
     if(_ahrs_device STREQUAL "none")
@@ -112,25 +103,6 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
        (_enable_vt03 AND _referee_uart STREQUAL _vt03_uart))
         message(FATAL_ERROR "Referee and remoter must not share RX ownership")
     endif()
-    if(_big_head_enabled)
-        if(NOT _usb_enabled)
-            message(FATAL_ERROR "big_head requires USB")
-        endif()
-        if(NOT _board STREQUAL "h723_mc02" OR NOT _ahrs_device STREQUAL "bmi088")
-            message(FATAL_ERROR "big_head requires h723_mc02 with BMI088 AHRS")
-        endif()
-        if(NOT _enable_vt03)
-            message(FATAL_ERROR "big_head requires VT03 input")
-        endif()
-        if(_motor_bus STREQUAL "none" OR _lower_bus STREQUAL "none" OR
-           _motor_bus STREQUAL _lower_bus)
-            message(FATAL_ERROR "big_head requires separate motor_can and lower_can resources")
-        endif()
-        if(_ui_uart STREQUAL _vt03_uart OR
-           (_enable_dr16 AND _ui_uart STREQUAL _dr16_uart))
-            message(FATAL_ERROR "big_head remoter UARTs cannot share the UI serial line")
-        endif()
-    endif()
     if(_enable_ps2)
         if(_ps2_cs STREQUAL "bsp::gpio::config{}")
             message(FATAL_ERROR "PS2 requires CS")
@@ -159,7 +131,6 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
         set(USER_REMOTER_DR16 ${_remote_dr16})
         set(USER_REMOTER_VT03 ${_remote_vt03})
         set(USER_REMOTER_PS2 ${_remote_ps2})
-        set(USER_BIG_HEAD_APP ${_big_head_app})
     endif()
     string(CONFIGURE [=[
 @_condition@
@@ -167,16 +138,12 @@ foreach(_board IN ITEMS h723_mc02 f407_cboard)
 #define USER_REMOTER_DR16 @_remote_dr16@
 #define USER_REMOTER_VT03 @_remote_vt03@
 #define USER_REMOTER_PS2 @_remote_ps2@
-#define USER_BIG_HEAD_APP @_big_head_app@
-inline constexpr bool big_head_enabled = @_big_head_enabled@;
 inline constexpr char ahrs_device[] = "@_ahrs_device@";
 inline constexpr bool bmi088_heater_enabled = @_heater_enabled@;
 inline constexpr imu::bmi088_thermal bmi088_thermal{@_thermal_target@, @_thermal_boost@,
     @_thermal_reboost@, @_thermal_approach_start@, @_thermal_approach_end@, @_thermal_hold_max@,
     @_thermal_kp@, @_thermal_ki@, @_thermal_kd@, @_thermal_max_out@};
 inline constexpr bsp::can::config dmimu_can{bsp::can::handle::@_dm_bus@, bsp::can::id_type::standard};
-inline constexpr bsp::can::config motor_can{bsp::can::handle::@_motor_bus@, bsp::can::id_type::standard};
-inline constexpr bsp::can::config lower_can{bsp::can::handle::@_lower_bus@, bsp::can::id_type::standard};
 inline constexpr auto rfid_uart = @_rfid_uart@;
 inline constexpr buzzer::config rfid_buzzer{@_buzzer_timer@,
     bsp::pwm::channel::ch@_buzzer_channel@, @_rfid_buzzer_period_us@,

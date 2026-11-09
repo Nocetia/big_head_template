@@ -1,3 +1,4 @@
+#include "big_head_config.hpp"
 #include "control.hpp"
 #include "remote_stream.hpp"
 #include "user_config.hpp"
@@ -13,7 +14,7 @@
 
 namespace big_head
 {
-namespace cfg = user_config::application::big_head;
+namespace cfg = config;
 using pnxtypes::status;
 
 // Visible in the debugger; counters are written only by their owning thread/IRQ.
@@ -114,8 +115,8 @@ struct can_bus
     bool ready = false;
 };
 
-can_bus motor_bus{user_config::motor_can};
-can_bus lower_bus{user_config::lower_can};
+can_bus motor_bus{cfg::motor_can};
+can_bus lower_bus{cfg::lower_can};
 
 motor::dji::m3508 friction_left{motor::dji::m3508::gear_ratio::direct_drive};
 motor::dji::m3508 friction_right{motor::dji::m3508::gear_ratio::direct_drive};

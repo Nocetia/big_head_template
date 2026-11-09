@@ -30,63 +30,6 @@ inline constexpr imu::bmi088_config bmi088{board::bmi088::spi, board::bmi088::ac
 namespace application
 {
 inline constexpr math::vector3 imu_offset{@_imu_offset@};
-namespace big_head
-{
-inline constexpr uint32_t control_period_ms = @_app_control_period_ms@;
-inline constexpr uint32_t control_priority = @_app_control_priority@;
-inline constexpr ULONG control_stack_size = @_app_control_stack_size@;
-inline constexpr uint32_t usb_period_ms = @_app_usb_period_ms@;
-inline constexpr uint32_t usb_write_timeout_ms = @_app_usb_write_timeout_ms@;
-inline constexpr uint32_t usb_priority = @_app_usb_priority@;
-inline constexpr ULONG usb_stack_size = @_app_usb_stack_size@;
-inline constexpr uint32_t vt03_baud_rate = @_app_vt03_baud_rate@;
-inline constexpr uint32_t imu_timeout_ms = @_app_imu_timeout_ms@;
-inline constexpr uint32_t vision_timeout_ms = @_app_vision_timeout_ms@;
-inline constexpr uint32_t lower_timeout_ms = @_app_lower_timeout_ms@;
-inline constexpr uint32_t motor_timeout_ms = @_app_motor_timeout_ms@;
-inline constexpr uint32_t recovery_period_ms = @_app_recovery_period_ms@;
-inline constexpr uint32_t auto_fire_timeout_ms = @_app_auto_fire_timeout_ms@;
-inline constexpr uint16_t pitch_id = @_app_pitch_id_hex@;
-inline constexpr uint16_t friction_left_id = @_app_friction_left_id_hex@;
-inline constexpr uint16_t friction_right_id = @_app_friction_right_id_hex@;
-// PID tuples: kp, ki, kd, max_out, max_iout; tuned at control_period_ms = 1.
-inline constexpr float yaw_position_pid[5]{@_app_yaw_position_pid@};
-inline constexpr float yaw_velocity_pid[5]{@_app_yaw_velocity_pid@};
-inline constexpr float pitch_position_pid[5]{@_app_pitch_position_pid@};
-inline constexpr float pitch_velocity_pid[5]{@_app_pitch_velocity_pid@};
-inline constexpr float friction_velocity_pid[5]{@_app_friction_velocity_pid@};
-inline constexpr float yaw_current_limit = @_app_yaw_current_limit@;
-inline constexpr float pitch_current_limit = @_app_pitch_current_limit@;
-inline constexpr float pitch_current_scale = @_app_pitch_current_scale@;
-inline constexpr float pitch_gravity_manual = @_app_pitch_gravity_manual@;
-inline constexpr float pitch_gravity_auto = @_app_pitch_gravity_auto@;
-inline constexpr float pitch_min = @_app_pitch_min@;
-inline constexpr float pitch_max = @_app_pitch_max@;
-inline constexpr float manual_deadband = @_app_manual_deadband@;
-inline constexpr float manual_angle_scale = @_app_manual_angle_scale@;
-inline constexpr float mouse_yaw_scale = @_app_mouse_yaw_scale@;
-inline constexpr float mouse_pitch_scale = @_app_mouse_pitch_scale@;
-inline constexpr float keyboard_slew_per_tick = @_app_keyboard_slew_per_tick@;
-inline constexpr float friction_speed = @_app_friction_speed@;
-inline constexpr float friction_ready_ratio = @_app_friction_ready_ratio@;
-inline constexpr float friction_drop = @_app_friction_drop@;
-inline constexpr float heat_fraction = @_app_heat_fraction@;
-inline constexpr float fire_angle_tolerance = @_app_fire_angle_tolerance@;
-inline constexpr int8_t trigger_low = @_trigger_low@;
-inline constexpr int8_t trigger_high = @_trigger_high@;
-inline constexpr int8_t trigger_continuous = @_trigger_continuous@;
-inline constexpr int8_t trigger_reverse = @_trigger_reverse@;
-inline constexpr bool auto_aim_default = @_app_auto_aim_default@;
-inline constexpr bool auto_shoot_default = @_app_auto_shoot_default@;
-inline constexpr bool gimbal_only_default = @_app_gimbal_only_default@;
-// prediction seconds, inertia, damping, command/torque scale.
-inline constexpr float yaw_feedforward[4]{@_app_yaw_feedforward@};
-inline constexpr float pitch_feedforward[4]{@_app_pitch_feedforward@};
-// Scalar Kalman filters: process noise Q, measurement noise R.
-inline constexpr float manual_yaw_filter[2]{@_app_manual_yaw_filter@};
-inline constexpr float manual_pitch_filter[2]{@_app_manual_pitch_filter@};
-inline constexpr float vision_filter[2]{@_app_vision_filter@};
-} // namespace big_head
 } // namespace application
 
 namespace ahrs

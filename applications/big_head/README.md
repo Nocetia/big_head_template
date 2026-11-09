@@ -47,17 +47,19 @@ USB 使用旧帧头、CRC16、小端 IEEE 754 单精度布局。接收角度为 
 
 ## 配置与姿态
 
-所有用户参数集中在 [configs/user_config.json](../../configs/user_config.json)，由同一
-生成入口输出 `configs/include/user_config.hpp`，不要手动修改生成头。
+应用私有参数集中在 [big_head_config.hpp](../big_head_config.hpp)。板级资源和共享服务参数
+仍放在 [configs/user_config.json](../../configs/user_config.json)，由统一入口生成
+`configs/include/user_config.hpp`，不要手动修改生成头。
 
 | 配置组 | 用途与单位 |
 | --- | --- |
-| `boards.h723_mc02` | `big_head_enabled`、遥控 UART、`motor_can`、`lower_can`、BMI088 和温控选择 |
-| `application.big_head` | 控制/USB 周期、线程优先级和栈、VT03 波特率、超时、ID、PID、限位、发射参数 |
+| `boards.h723_mc02` | 遥控 UART、BMI088、温控及其他共享板级资源选择 |
+| `applications/big_head_config.hpp` | 应用启用、两路 CAN、周期、线程、VT03 波特率、超时、ID、PID、限位和发射参数 |
 | `remoter.offline_timeout_ms` | 两种遥控输入的有效期，默认 100 ms；本应用不使用独立遥控线程 |
-| `ahrs`、`bmi088_heater` | 既有姿态和温控服务配置，应用显式启动 |
+| `ahrs`、`bmi088_heater` | 共享姿态和温控服务配置；zero-rate 参数也保留在这里 |
 
-应用控制周期固定为 1 ms，旧 PID 的 I/D 系数已经包含采样周期，生成器拒绝其他周期。
+应用控制周期固定为 1 ms，旧 PID 的 I/D 系数已经包含采样周期；应用配置头通过
+编译期断言检查周期、电机 ID、Pitch 范围和电流命令范围。
 PID 数组顺序是 `{kp, ki, kd, max_out, max_iout}`；前馈数组为
 `{预测时间秒, 惯量, 阻尼, 命令/力矩比例}`，Pitch 比例对应速度 PID 输出单位，
 之后再乘 `pitch_current_scale`；一维 Kalman 数组为 `{Q, R}`。
@@ -157,9 +159,9 @@ cmake -P configs/tests/validate.cmake
 ```
 
 主机测试覆盖协议黄金字节、分片/粘包/CRC/非有限数、遥控组帧与映射、电机速度单位和
-分组命令，以及解锁、切源、故障归零、限位、自动射击和手动接管回归。配置测试覆盖
-两块板的默认选择及资源冲突、重复 ID、非法周期和控制参数。
+分组命令，以及解锁、切源、故障归零、限位、自动射击和手动接管回归。全局配置测试覆盖
+两块板的默认选择、共享 IMU 参数及资源冲突；应用参数约束由应用配置头在编译期检查。
 
 本次已完成 H723 清理后全量编译链接、F407 编译链接、三个主机测试以及配置的两个
-正常/十二个非法用例验证。USB/遥控实机收发、BMI088 安装轴、CAN 对端协议、电机
+正常/两个非法用例验证。USB/遥控实机收发、BMI088 安装轴、CAN 对端协议、电机
 方向与负载下的 PID、温控和断线恢复仍需台架验证；主机测试不能验证这些硬件行为。

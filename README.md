@@ -22,7 +22,7 @@
 
 H723 默认启用 [`big_head` 应用](applications/big_head/README.md)，由其 `app_start()` 显式启动 BMI088
 并创建控制和 USB 发送线程。拨弹盘与 yaw 电机由下位机执行，本板通过 CAN 发送控制命令。
-`boards.h723_mc02.big_head_enabled` 可关闭应用；F407 默认不启用该应用。
+`applications/big_head_config.hpp` 中的 `big_head_enabled` 可关闭应用；F407 不构建该应用。
 配置 `-DUSER_TEST=ON` 时由 [SMC 测试应用](applications/test/README.md) 替代 big_head 入口。
 
 ## 配置与接入
@@ -30,7 +30,8 @@ H723 默认启用 [`big_head` 应用](applications/big_head/README.md)，由其 
 板载 BMI088、LED 和固定 GPIO 接线随选板切换；AHRS 设备和应用串口选择集中在
 [`configs/user_config.json`](configs/user_config.json)，生成结果为 `configs/include/user_config.hpp`。
 当前 H723 沿用旧应用接线：VT03 使用 USART1（921600 baud）、DR16 使用 UART5，本地电机使用
-FDCAN1，下位机使用 FDCAN2；UI 经下位机发送，关闭本板 UI/裁判串口及 PS2 输入。
+FDCAN1，下位机使用 FDCAN2；两路应用 CAN 在 `big_head_config.hpp` 中选择。UI 经下位机发送，
+关闭本板 UI/裁判串口及 PS2 输入。
 F407 的 UI 仍以 USART1 为示例。配置头不初始化设备，调用方式见
 [devices 文档](devices/README.md#应用资源选择)。
 
@@ -42,7 +43,6 @@ F407 的 UI 仍以 USART1 为示例。配置头不初始化设备，调用方式
 | `values.cmake` | 数值、布尔值和三维向量校验 |
 | `communication.cmake` | UI、PS2、遥控与裁判接收参数 |
 | `imu.cmake` | DMIMU、AHRS、ESKF 和温控参数 |
-| `application.cmake` | big_head 调度、控制参数、电机 ID、限幅及超时校验 |
 | `boards.cmake` | 板级资源、启用选择和资源冲突检查 |
 | `user_config.hpp.in` | 生成头文件模板 |
 
@@ -63,7 +63,9 @@ CMake 配置阶段自动生成头文件，构建时会检测 JSON 修改并重�
 | `ui`、`ps2` | 发送超时、PS2 时序及死区 |
 | `remoter` | 供应用组织遥控处理的调度参数，不会创建遥控线程 |
 | `application.imu_offset` | 应用参考点到 IMU 的位移，设备服务不自动执行位置补偿 |
-| `application.big_head` | 1 ms 控制、USB 发送、VT03 波特率、PID/前馈、摩擦轮模型和各输入失效时间 |
+
+大头应用的启用选择、两路 CAN、控制、USB、VT03、PID/前馈和超时参数放在
+[applications/big_head_config.hpp](applications/big_head_config.hpp)，不进入共享配置生成链。
 
 `boards.<板型>.ahrs_device` 选择 `bmi088`、`dmimu` 或 `none`，`ahrs` 保存调度参数。
 通过 `imu::start_bmi088()` 或 `imu::start_dmimu()` 启动，在 `imu::attitude::output`

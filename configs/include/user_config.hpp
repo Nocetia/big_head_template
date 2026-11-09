@@ -16,16 +16,12 @@ namespace user_config
 #define USER_REMOTER_DR16 1
 #define USER_REMOTER_VT03 1
 #define USER_REMOTER_PS2 0
-#define USER_BIG_HEAD_APP 1
-inline constexpr bool big_head_enabled = true;
 inline constexpr char ahrs_device[] = "bmi088";
 inline constexpr bool bmi088_heater_enabled = true;
 inline constexpr imu::bmi088_thermal bmi088_thermal{45.0f, 0.059999999999999998f,
     0.050000000000000003f, 0.043999999999999997f, 0.029000000000000001f, 0.040000000000000001f,
     300.0f, 0.059999999999999998f, 100.0f, 90.0f};
 inline constexpr bsp::can::config dmimu_can{bsp::can::handle::fdcan1, bsp::can::id_type::standard};
-inline constexpr bsp::can::config motor_can{bsp::can::handle::fdcan1, bsp::can::id_type::standard};
-inline constexpr bsp::can::config lower_can{bsp::can::handle::fdcan2, bsp::can::id_type::standard};
 inline constexpr auto rfid_uart = bsp::peripherals::usart10;
 inline constexpr buzzer::config rfid_buzzer{bsp::peripherals::tim12,
     bsp::pwm::channel::ch2, 333,
@@ -45,16 +41,12 @@ inline constexpr auto ps2_spi = bsp::spi::handle::spi1;
 #define USER_REMOTER_DR16 1
 #define USER_REMOTER_VT03 1
 #define USER_REMOTER_PS2 0
-#define USER_BIG_HEAD_APP 0
-inline constexpr bool big_head_enabled = false;
 inline constexpr char ahrs_device[] = "bmi088";
 inline constexpr bool bmi088_heater_enabled = false;
 inline constexpr imu::bmi088_thermal bmi088_thermal{45.0f, 0.059999999999999998f,
     0.050000000000000003f, 0.043999999999999997f, 0.029000000000000001f, 0.040000000000000001f,
     650.0f, 0.080000000000000002f, 10.0f, 900.0f};
 inline constexpr bsp::can::config dmimu_can{bsp::can::handle::can1, bsp::can::id_type::standard};
-inline constexpr bsp::can::config motor_can{bsp::can::handle::none, bsp::can::id_type::standard};
-inline constexpr bsp::can::config lower_can{bsp::can::handle::none, bsp::can::id_type::standard};
 inline constexpr auto rfid_uart = bsp::peripherals::usart1;
 inline constexpr buzzer::config rfid_buzzer{bsp::peripherals::tim4,
     bsp::pwm::channel::ch3, 333,
@@ -88,63 +80,6 @@ inline constexpr imu::bmi088_config bmi088{board::bmi088::spi, board::bmi088::ac
 namespace application
 {
 inline constexpr math::vector3 imu_offset{0.0f, 0.0f, 0.0f};
-namespace big_head
-{
-inline constexpr uint32_t control_period_ms = 1;
-inline constexpr uint32_t control_priority = 4;
-inline constexpr ULONG control_stack_size = 8192;
-inline constexpr uint32_t usb_period_ms = 2;
-inline constexpr uint32_t usb_write_timeout_ms = 5;
-inline constexpr uint32_t usb_priority = 11;
-inline constexpr ULONG usb_stack_size = 2048;
-inline constexpr uint32_t vt03_baud_rate = 921600;
-inline constexpr uint32_t imu_timeout_ms = 20;
-inline constexpr uint32_t vision_timeout_ms = 100;
-inline constexpr uint32_t lower_timeout_ms = 100;
-inline constexpr uint32_t motor_timeout_ms = 100;
-inline constexpr uint32_t recovery_period_ms = 100;
-inline constexpr uint32_t auto_fire_timeout_ms = 1000;
-inline constexpr uint16_t pitch_id = 0x205;
-inline constexpr uint16_t friction_left_id = 0x201;
-inline constexpr uint16_t friction_right_id = 0x202;
-// PID tuples: kp, ki, kd, max_out, max_iout; tuned at control_period_ms = 1.
-inline constexpr float yaw_position_pid[5]{140.0f, 0.0f, 3000.0f, 500.0f, 10.0f};
-inline constexpr float yaw_velocity_pid[5]{4000.0f, 0.0f, 10000.0f, 25000.0f, 100.0f};
-inline constexpr float pitch_position_pid[5]{80.0f, 0.0f, 800.0f, 500.0f, 50.0f};
-inline constexpr float pitch_velocity_pid[5]{200.0f, 0.0f, 0.0f, 500.0f, 50.0f};
-inline constexpr float friction_velocity_pid[5]{100.0f, 0.0f, 0.0f, 15000.0f, 3.0f};
-inline constexpr float yaw_current_limit = 25000.0f;
-inline constexpr float pitch_current_limit = 15000.0f;
-inline constexpr float pitch_current_scale = 50.0f;
-inline constexpr float pitch_gravity_manual = 1750.0f;
-inline constexpr float pitch_gravity_auto = 2000.0f;
-inline constexpr float pitch_min = -0.59999999999999998f;
-inline constexpr float pitch_max = 0.40000000000000002f;
-inline constexpr float manual_deadband = 0.0050000000000000001f;
-inline constexpr float manual_angle_scale = 0.050000000000000003f;
-inline constexpr float mouse_yaw_scale = 0.025000000000000001f;
-inline constexpr float mouse_pitch_scale = 0.01f;
-inline constexpr float keyboard_slew_per_tick = 0.002f;
-inline constexpr float friction_speed = 600.0f;
-inline constexpr float friction_ready_ratio = 0.90000000000000002f;
-inline constexpr float friction_drop = 6.0f;
-inline constexpr float heat_fraction = 0.69999999999999996f;
-inline constexpr float fire_angle_tolerance = 0.01f;
-inline constexpr int8_t trigger_low = 4;
-inline constexpr int8_t trigger_high = 8;
-inline constexpr int8_t trigger_continuous = 16;
-inline constexpr int8_t trigger_reverse = -8;
-inline constexpr bool auto_aim_default = true;
-inline constexpr bool auto_shoot_default = true;
-inline constexpr bool gimbal_only_default = true;
-// prediction seconds, inertia, damping, command/torque scale.
-inline constexpr float yaw_feedforward[4]{0.0089999999999999993f, 0.02f, 0.61511340000000003f, 1.3500000000000001f};
-inline constexpr float pitch_feedforward[4]{0.0f, 0.02f, 0.61511340000000003f, 1.3500000000000001f};
-// Scalar Kalman filters: process noise Q, measurement noise R.
-inline constexpr float manual_yaw_filter[2]{0.10000000000000001f, 0.54300000000000004f};
-inline constexpr float manual_pitch_filter[2]{0.001f, 0.54300000000000004f};
-inline constexpr float vision_filter[2]{0.001f, 0.54300000000000004f};
-} // namespace big_head
 } // namespace application
 
 namespace ahrs
