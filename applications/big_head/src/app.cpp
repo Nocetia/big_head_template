@@ -8,9 +8,12 @@
 #include "dji_manager.hpp"
 #include "gm6020.hpp"
 #include "m3508.hpp"
+#include "smc.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+#define smc_test_on_friction
 
 namespace big_head
 {
@@ -128,12 +131,32 @@ sample<vision_command> vision_received;
 sample<vision_telemetry> telemetry;
 vision_parser vision_decoder;
 
+#ifdef smc_test_on_friction
+control::smc_config friction_smc_config()
+{
+    control::smc_config result;
+    result.mode = control::smc_mode::velocity;
+    result.inertia = 0.1f;
+    result.reaching_gain = 0.5f;
+    result.surface_gain = 0.5f;
+    result.switching_gain = 0.5f;
+    result.boundary_layer = 0.5f;
+    result.saturation_limit = 1.0f;
+    result.output_limit = 1500.0f;
+    result.velocity_integral_limit = 2.0f;
+    return result;
+}
+
+control::smc friction_left_smc;
+control::smc friction_right_smc;
+#else
 void configure_friction_motor(motor::dji::m3508& instance)
 {
     instance.speed_pid = control::pid(cfg::friction_velocity_pid[0],
         cfg::friction_velocity_pid[1], cfg::friction_velocity_pid[2],
         cfg::friction_velocity_pid[3], cfg::friction_velocity_pid[4]);
 }
+#endif
 
 TX_THREAD control_thread;
 TX_THREAD usb_thread;
@@ -163,7 +186,7 @@ control_parameters control_settings()
     result.manual_angle_scale = cfg::manual_angle_scale;
     result.mouse_yaw_scale = cfg::mouse_yaw_scale;
     result.mouse_pitch_scale = cfg::mouse_pitch_scale;
-    result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;//这是什么
+    result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;
     result.friction_speed = cfg::friction_speed;
     result.friction_ready_ratio = cfg::friction_ready_ratio;
     result.friction_drop = cfg::friction_drop;
@@ -528,6 +551,41 @@ void control_entry(ULONG)
         {
             ++diagnostic.pitch_saturations;
         }
+#ifdef smc_test_on_friction
+        if (output.friction_enabled)
+        {
+            constexpr float dt = cfg::control_period_ms * 0.001f;
+            const float left_current = friction_left_smc.update_velocity(
+                output.friction_left_speed, friction_left.fdb.velocity, dt);
+            const float right_current = friction_right_smc.update_velocity(
+                output.friction_right_speed, friction_right.fdb.velocity, dt);
+            if (friction_left_smc.state().valid && friction_right_smc.state().valid)
+            {
+                friction_left.motor_mode = motor::mode::current;
+                friction_right.motor_mode = motor::mode::current;
+                friction_left.cmd.current = static_cast<int16_t>(std::lround(left_current));
+                friction_right.cmd.current = static_cast<int16_t>(std::lround(right_current));
+            }
+            else
+            {
+                friction_left_smc.reset();
+                friction_right_smc.reset();
+                friction_left.motor_mode = motor::mode::relax;
+                friction_right.motor_mode = motor::mode::relax;
+                friction_left.cmd.current = 0;
+                friction_right.cmd.current = 0;
+            }
+        }
+        else
+        {
+            friction_left_smc.reset();
+            friction_right_smc.reset();
+            friction_left.motor_mode = motor::mode::relax;
+            friction_right.motor_mode = motor::mode::relax;
+            friction_left.cmd.current = 0;
+            friction_right.cmd.current = 0;
+        }
+#else
         friction_left.motor_mode = output.friction_enabled ? motor::mode::vel : motor::mode::relax;
         friction_right.motor_mode = friction_left.motor_mode;
         friction_left.cmd.velocity = output.friction_left_speed;
@@ -537,6 +595,7 @@ void control_entry(ULONG)
             friction_left.speed_pid.reset_state(0.0f, friction_left.fdb.velocity);
             friction_right.speed_pid.reset_state(0.0f, friction_right.fdb.velocity);
         }
+#endif
         motors.update();
         if (motor_bus.ready && !motor_recovering)
         {
@@ -628,8 +687,18 @@ void usb_entry(ULONG)
 extern "C" void app_start()
 {
     using namespace big_head;
+#ifdef smc_test_on_friction
+    const auto smc_config = friction_smc_config();
+    if (!friction_left_smc.configure(smc_config) ||
+        !friction_right_smc.configure(smc_config))
+    {
+        Error_Handler();
+        return;
+    }
+#else
     configure_friction_motor(friction_left);
     configure_friction_motor(friction_right);
+#endif
     const auto motor_handle = motor_bus.resource.instance;
     if (bsp::dwt::init() != status::ok ||
         !motors.register_motor(friction_left, motor_handle, cfg::friction_left_id) ||
