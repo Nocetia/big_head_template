@@ -17,6 +17,11 @@
 
 namespace big_head
 {
+#ifdef DEBUG
+volatile float debug_fricl_vel = 0.0f;
+volatile float debug_fricr_vel = 0.0f;
+#endif
+
 namespace cfg = config;
 using pnxtypes::status;
 
@@ -595,6 +600,10 @@ void control_entry(ULONG)
             friction_left.speed_pid.reset_state(0.0f, friction_left.fdb.velocity);
             friction_right.speed_pid.reset_state(0.0f, friction_right.fdb.velocity);
         }
+#endif
+#ifdef DEBUG
+        debug_fricl_vel = friction_left.fdb.velocity;
+        debug_fricr_vel = friction_right.fdb.velocity;
 #endif
         motors.update();
         if (motor_bus.ready && !motor_recovering)

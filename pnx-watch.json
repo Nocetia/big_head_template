@@ -73,6 +73,14 @@
       "plotId": "watch-only"
     },
     {
+      "expression": "big_head::debug_fricl_vel",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_fricr_vel",
+      "plotId": "watch-only"
+    },
+    {
       "expression": "imu::bmi088_sampling_debug.rate_hz",
       "plotId": "watch-only"
     },
