@@ -172,7 +172,7 @@ inline std::array<uint8_t, vision_telemetry_size> encode_vision(const vision_tel
     bytes[0] = 0x5A;
     bytes[1] = static_cast<uint8_t>(value.detect_color | (value.reset_tracker << 1U));
     bytes[2] = value.mode;
-    // Byte 3 is the old reserved bit-field allocation byte, not part of the quaternion.
+    bytes[3] = 0; // reserved: uint8_t reserved : 2 in the legacy layout.
     for (unsigned i = 0; i < 4; ++i)
     {
         write_float_le(bytes.data() + 4 + i * 4, value.q[i]);

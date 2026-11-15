@@ -13,7 +13,7 @@
 #include <cmath>
 #include <cstring>
 
-#define smc_test_on_friction
+// #define smc_test_on_friction
 
 namespace big_head
 {
@@ -630,16 +630,15 @@ void control_entry(ULONG)
             }
         }
 
-        // The legacy TX frame has no validity bits. Do not represent stale IMU or
-        // lower-board color/ballistic data as a valid vision telemetry packet.
-        sample<vision_telemetry> next;
-        if (input.imu_valid && input.lower_valid)
+        // Keep the last valid telemetry snapshot so brief IMU or lower-board gaps do not
+        // interrupt the fixed-rate USB stream used by the legacy vision protocol.
+        if (input.imu_valid)
         {
+            sample<vision_telemetry> next;
             next.data = make_telemetry(attitude, input, output);
             next.received_ms = attitude.received_ms;
             next.valid = true;
-        }
-        {
+
             const auto mask = __get_PRIMASK();
             __disable_irq();
             next.sequence = telemetry.sequence + 1;
@@ -672,7 +671,7 @@ void usb_entry(ULONG)
             value = telemetry;
             __set_PRIMASK(mask);
         }
-        if (bsp::usb::connected() && fresh(value, HAL_GetTick(), cfg::imu_timeout_ms))
+        if (bsp::usb::connected() && value.valid)
         {
             const auto packet = encode_vision(value.data);
             uint32_t transferred = 0;
