@@ -176,6 +176,35 @@ void test_edges_and_takeover()
         "turn command is a pulse but yaw target persists");
 }
 
+void test_spin_chassis_control()
+{
+    controller control{settings()};
+    auto input = ready_input();
+    arm(control, input);
+    input.remote.left_sw = remotes::sw_state::up;
+
+    input.remote.left_x = -1.0f;
+    auto output = control.update(input);
+    require(output.lower.ifspin && !output.lower.ifgimbalonly && output.lower.len_level == 0 &&
+                output.lower.vy == 0,
+        "spin enters chassis control and maps left stick minimum to leg level 0");
+
+    input.remote.left_x = 0.0f;
+    output = control.update(input);
+    require(output.lower.len_level == 1 && output.lower.vy == 0,
+        "centered left stick maps to leg level 1 without lateral motion");
+
+    input.remote.left_x = 1.0f;
+    output = control.update(input);
+    require(output.lower.len_level == 2 && output.lower.vy == 0,
+        "left stick maximum maps to leg level 2");
+
+    input.remote.left_x = 2.0f;
+    require(control.update(input).lower.len_level == 2, "leg level clamps at 2");
+    input.remote.left_x = -2.0f;
+    require(control.update(input).lower.len_level == 0, "leg level clamps at 0");
+}
+
 void test_aim_and_limits()
 {
     controller control{settings()};
@@ -286,6 +315,7 @@ int main()
 {
     test_remote_and_faults();
     test_edges_and_takeover();
+    test_spin_chassis_control();
     test_aim_and_limits();
     test_automatic_shot();
     test_manual_takeover();

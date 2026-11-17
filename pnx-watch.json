@@ -99,6 +99,54 @@
     {
       "expression": "imu::attitude::output.data_.pitch",
       "plotId": "plot-1"
+    },
+    {
+      "expression": "big_head::vision_received.data.mode",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.yaw",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.yaw_vel",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.yaw_acc",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.pitch",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.pitch_vel",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.data.pitch_acc",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.received_ms",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.sequence",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::vision_received.valid",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::diagnostic.usb_tx_failures",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::diagnostic.usb_partial_writes",
+      "plotId": "watch-only"
     }
   ],
   "activeGroup": "default",

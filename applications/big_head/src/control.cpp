@@ -9,6 +9,7 @@
 debug可以看：diagnostic, motor_received, lower_received, remoter
 attitude_reader， vision_received， telemetry
 */
+#define SPIN_USED_AS_CHAISSIS_CONTROL
 
 namespace big_head
 {
@@ -217,10 +218,20 @@ control_output controller::update(const control_input& input)
     output.auto_shoot = config_.auto_shoot_default || (output.auto_aim && remote.key.CTRL);
     output.aim_rune = aim_rune_;
     const bool spin = remote.key.SHIFT || remote.left_sw == remotes::sw_state::up;
+#ifdef SPIN_USED_AS_CHAISSIS_CONTROL
+    if (spin)
+    {
+        gimbal_only_ = false;
+        const float leg_input =
+            finite(remote.left_x) ? std::clamp(remote.left_x, -1.0f, 1.0f) : 0.0f;
+        leg_level_ = static_cast<int8_t>(std::lround(leg_input + 1.0f));
+    }
+#else
     if (spin)
     {
         leg_level_ = 0;
     }
+#endif
     const float keyboard_x = static_cast<float>(remote.key.W) - remote.key.S;
     const float keyboard_y = static_cast<float>(remote.key.D) - remote.key.A;
     keyboard_vx_ = slew(keyboard_vx_, keyboard_x, config_.keyboard_slew_per_tick);
@@ -236,7 +247,12 @@ control_output controller::update(const control_input& input)
         output.lower.ifgimbalonly = gimbal_only_;
         output.lower.len_level = leg_level_;
         output.lower.vx = static_cast<int8_t>((keyboard_vx_ + remote.left_y) * 10.0f);
+#ifdef SPIN_USED_AS_CHAISSIS_CONTROL
+        const float remote_vy = spin ? 0.0f : remote.left_x;
+        output.lower.vy = static_cast<int8_t>((keyboard_vy_ + remote_vy) * 10.0f);
+#else
         output.lower.vy = static_cast<int8_t>((keyboard_vy_ + remote.left_x) * 10.0f);
+#endif
     }
     output.ui.reset = remote.key.B;
     output.ui.bulletfreq = high_frequency_ && !aim_rune_;

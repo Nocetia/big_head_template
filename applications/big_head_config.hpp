@@ -34,8 +34,10 @@ inline constexpr std::uint16_t friction_right_id = 0x202;
 // PID tuples: kp, ki, kd, max_out, max_iout; tuned at control_period_ms = 1.
 inline constexpr float yaw_position_pid[5]{140.0f, 0.0f, 3000.0f, 500.0f, 10.0f};
 inline constexpr float yaw_velocity_pid[5]{4000.0f, 0.0f, 10000.0f, 25000.0f, 100.0f};
-inline constexpr float pitch_position_pid[5]{80.0f, 0.0f, 800.0f, 500.0f, 50.0f};
-inline constexpr float pitch_velocity_pid[5]{200.0f, 0.0f, 0.0f, 500.0f, 50.0f};
+// inline constexpr float pitch_position_pid[5]{80.0f, 0.0f, 800.0f, 500.0f, 50.0f};
+// inline constexpr float pitch_velocity_pid[5]{200.0f, 0.0f, 0.0f, 500.0f, 50.0f};
+inline constexpr float pitch_position_pid[5]{120.0f, 0.0f, 800.0f, 500.0f, 50.0f};
+inline constexpr float pitch_velocity_pid[5]{400.0f, 0.0f, 0.0f, 500.0f, 50.0f};
 inline constexpr float friction_velocity_pid[5]{100.0f, 0.0f, 0.0f, 15000.0f, 3.0f};
 
 inline constexpr float yaw_current_limit = 25000.0f;
