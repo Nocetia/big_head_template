@@ -68,7 +68,8 @@ PID 数组顺序是 `{kp, ki, kd, max_out, max_iout}`；前馈数组为
 摩擦轮速度和掉速阈值按直驱输出轴定义。
 
 BMI088 服务输出原始传感器轴姿态，应用保留旧安装映射：`pitch = attitude.roll`、
-`roll = -attitude.pitch`、yaw/total_yaw 不变，Pitch 角速度取 gyro.x，yaw 取 gyro.z。
+`roll = -attitude.pitch`、yaw/total_yaw 不变，Pitch/Yaw 角速度由机体角速度换算为
+Euler roll/yaw rate。
 USB 四元数由映射后的欧拉角重建。服务继续独占 SPI2、加热 TIM3 CH4 及其
 TIM6 / DMA2 Stream6 断点保护资源，详见 [modules](../../modules/README.md)。
 

@@ -520,13 +520,31 @@ void control_entry(ULONG)
         input.pitch = attitude.roll;
         input.yaw = attitude.yaw;
         input.total_yaw = attitude.total_yaw;
-        input.gyro_pitch = attitude.gyro.x;//pitch是x
-        input.gyro_yaw = attitude.gyro.z;//yaw是z
+        // Euler rates use ESKF roll/pitch before the legacy gimbal-axis mapping.
+        constexpr float min_euler_rate_cos_pitch = 1.0e-3f;
+        const bool euler_rate_input_valid =
+            std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
+            std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.y) &&
+            std::isfinite(attitude.gyro.z);
+        const float cos_pitch = euler_rate_input_valid ? std::cos(attitude.pitch) : 0.0f;
+        const bool euler_rate_valid =
+            euler_rate_input_valid && std::abs(cos_pitch) >= min_euler_rate_cos_pitch;
+        input.gyro_pitch = 0.0f;
+        input.gyro_yaw = 0.0f;
+        if (euler_rate_valid)
+        {
+            input.gyro_yaw = (std::sin(attitude.roll) * attitude.gyro.y +
+                                 std::cos(attitude.roll) * attitude.gyro.z) /
+                             cos_pitch;
+            input.gyro_pitch =
+                attitude.gyro.x + std::sin(attitude.pitch) * input.gyro_yaw;
+        }
         input.imu_valid = attitude.online && attitude.stage == imu::attitude::phase::running &&
                           uint32_t(now - attitude.received_ms) < cfg::imu_timeout_ms &&
                           std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
                           std::isfinite(attitude.yaw) && std::isfinite(attitude.total_yaw) &&
-                          std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.z);
+                          euler_rate_valid && std::isfinite(input.gyro_pitch) &&
+                          std::isfinite(input.gyro_yaw);
         input.vision = vision.data;
         input.vision_valid = fresh(vision, now, cfg::vision_timeout_ms);
         input.lower = lower.data;
