@@ -142,6 +142,33 @@ IMU/Pitch 临时失效会清空 PID 和射击状态，但保留解锁状态：�
 调试器可查看 `big_head::diagnostic` 的周期超限、下位机发送失败、CAN 重启、USB
 发送失败/短写和 Pitch 饱和计数。首次上电应先确认解锁和失联停机，再逐个验证电机方向、安装轴和参数。
 
+### 摩擦轮 SMC 实时调参
+
+启用 `src/app.cpp` 中的 `#define smc_test_on_friction` 后重新编译、烧录，在调试器的
+Watch / Live Watch 中修改以下 `volatile float` 变量，两侧摩擦轮共用这些参数：
+
+```cpp
+big_head::debug_smc_inertia                 // 默认 5.0
+big_head::debug_smc_reaching_gain           // 默认 0.5
+big_head::debug_smc_surface_gain            // 默认 0.5
+big_head::debug_smc_switching_gain          // 默认 0.5
+big_head::debug_smc_boundary_layer          // 默认 0.5
+big_head::debug_smc_saturation_limit        // 默认 1.0
+big_head::debug_smc_output_limit            // 默认 1500.0，C620 电流协议单位
+big_head::debug_smc_velocity_integral_limit // 默认 2.0，速度误差积分限幅（rad）
+```
+
+控制线程每个周期（默认 1 ms）读取一次，变化且通过 SMC 校验后在本周期应用，同时重置两侧
+SMC 的积分和目标历史；参数不变时保留状态。非有限数或非法范围不会应用，继续使用上一次
+有效配置：`inertia`、`saturation_limit`、`output_limit` 必须大于零，其余参数允许为零、
+不允许为负。最终电流命令另限幅至 C620 的 ±16384，避免改大输出限幅后转换溢出。
+逐项修改会逐项生效；需要整组同时修改时先暂停目标再改值，恢复后应用。重启后恢复源码默认值。
+
+PnX Platform 仅允许写入能在源码中确认唯一且显式初始化的变量，会忽略条件编译内的声明，
+因此这 8 个调参变量声明放在 `#if/#ifdef` 之外，实际 SMC 控制仍由上述宏选择。
+修改声明所在文件后需重新构建、烧录匹配固件，并重新连接以刷新写入校验；在 PnX 中选择
+`build/h723_mc02/embedded_framework.elf` 和可写连接，源码时间须不晚于 ELF。
+
 ## 构建与验证
 
 在仓库根目录构建固件：

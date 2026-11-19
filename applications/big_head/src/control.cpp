@@ -9,7 +9,7 @@
 debug可以看：diagnostic, motor_received, lower_received, remoter
 attitude_reader， vision_received， telemetry
 */
-#define SPIN_USED_AS_CHAISSIS_CONTROL
+// #define SPIN_USED_AS_CHAISSIS_CONTROL
 
 namespace big_head
 {

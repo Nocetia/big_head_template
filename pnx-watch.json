@@ -74,11 +74,11 @@
     },
     {
       "expression": "big_head::debug_fricl_vel",
-      "plotId": "watch-only"
+      "plotId": "plot-1"
     },
     {
       "expression": "big_head::debug_fricr_vel",
-      "plotId": "watch-only"
+      "plotId": "plot-1"
     },
     {
       "expression": "imu::bmi088_sampling_debug.rate_hz",
@@ -98,7 +98,7 @@
     },
     {
       "expression": "imu::attitude::output.data_.pitch",
-      "plotId": "plot-1"
+      "plotId": "watch-only"
     },
     {
       "expression": "big_head::vision_received.data.mode",
@@ -146,6 +146,34 @@
     },
     {
       "expression": "big_head::diagnostic.usb_partial_writes",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_boundary_layer",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_output_limit",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_reaching_gain",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_saturation_limit",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_surface_gain",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_switching_gain",
+      "plotId": "watch-only"
+    },
+    {
+      "expression": "big_head::debug_smc_velocity_integral_limit",
       "plotId": "watch-only"
     }
   ],

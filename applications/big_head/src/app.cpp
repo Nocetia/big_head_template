@@ -13,7 +13,7 @@
 #include <cmath>
 #include <cstring>
 
-// #define smc_test_on_friction
+#define smc_test_on_friction
 
 namespace big_head
 {
@@ -21,6 +21,17 @@ namespace big_head
 volatile float debug_fricl_vel = 0.0f;
 volatile float debug_fricr_vel = 0.0f;
 #endif
+
+// Debugger writes; the control thread samples these once per cycle for both motors.
+// PnX verifies only declarations outside conditional compilation before allowing writes.
+volatile float debug_smc_inertia = 5.0f; // 理论 5
+volatile float debug_smc_reaching_gain = 0.5f;
+volatile float debug_smc_surface_gain = 0.5f;
+volatile float debug_smc_switching_gain = 0.5f;
+volatile float debug_smc_boundary_layer = 0.5f;
+volatile float debug_smc_saturation_limit = 1.0f;
+volatile float debug_smc_output_limit = 1500.0f;
+volatile float debug_smc_velocity_integral_limit = 2.0f;
 
 namespace cfg = config;
 using pnxtypes::status;
@@ -141,14 +152,14 @@ control::smc_config friction_smc_config()
 {
     control::smc_config result;
     result.mode = control::smc_mode::velocity;
-    result.inertia = 0.1f;
-    result.reaching_gain = 0.5f;
-    result.surface_gain = 0.5f;
-    result.switching_gain = 0.5f;
-    result.boundary_layer = 0.5f;
-    result.saturation_limit = 1.0f;
-    result.output_limit = 1500.0f;
-    result.velocity_integral_limit = 2.0f;
+    result.inertia = debug_smc_inertia;
+    result.reaching_gain = debug_smc_reaching_gain;
+    result.surface_gain = debug_smc_surface_gain;
+    result.switching_gain = debug_smc_switching_gain;
+    result.boundary_layer = debug_smc_boundary_layer;
+    result.saturation_limit = debug_smc_saturation_limit;
+    result.output_limit = debug_smc_output_limit;
+    result.velocity_integral_limit = debug_smc_velocity_integral_limit;
     return result;
 }
 
@@ -522,31 +533,34 @@ void control_entry(ULONG)
         input.pitch = attitude.roll;
         input.yaw = attitude.yaw;
         input.total_yaw = attitude.total_yaw;
-        // Euler rates use ESKF roll/pitch before the legacy gimbal-axis mapping.
-        constexpr float min_euler_rate_cos_pitch = 1.0e-3f;
-        const bool euler_rate_input_valid =
-            std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
-            std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.y) &&
-            std::isfinite(attitude.gyro.z);
-        const float cos_pitch = euler_rate_input_valid ? std::cos(attitude.pitch) : 0.0f;
-        const bool euler_rate_valid =
-            euler_rate_input_valid && std::abs(cos_pitch) >= min_euler_rate_cos_pitch;
-        input.gyro_pitch = 0.0f;
-        input.gyro_yaw = 0.0f;
-        if (euler_rate_valid)
-        {
-            input.gyro_yaw = (std::sin(attitude.roll) * attitude.gyro.y +
-                                 std::cos(attitude.roll) * attitude.gyro.z) /
-                             cos_pitch;
-            input.gyro_pitch =
-                attitude.gyro.x + std::sin(attitude.pitch) * input.gyro_yaw;
-        }
+        // // Euler rates use ESKF roll/pitch before the legacy gimbal-axis mapping.
+        // constexpr float min_euler_rate_cos_pitch = 1.0e-3f;
+        // const bool euler_rate_input_valid =
+        //     std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
+        //     std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.y) &&
+        //     std::isfinite(attitude.gyro.z);
+        // const float cos_pitch = euler_rate_input_valid ? std::cos(attitude.pitch) : 0.0f;
+        // const bool euler_rate_valid =
+        //     euler_rate_input_valid && std::abs(cos_pitch) >= min_euler_rate_cos_pitch;
+        // input.gyro_pitch = 0.0f;
+        // input.gyro_yaw = 0.0f;
+        input.gyro_pitch = attitude.gyro.x;
+        input.gyro_yaw = attitude.gyro.z;
+        // if (euler_rate_valid)
+        // {
+        //     input.gyro_yaw = (std::sin(attitude.roll) * attitude.gyro.y +
+        //                          std::cos(attitude.roll) * attitude.gyro.z) /
+        //                      cos_pitch;
+        //     input.gyro_pitch =
+        //         attitude.gyro.x + std::sin(attitude.pitch) * input.gyro_yaw;
+        // }
         input.imu_valid = attitude.online && attitude.stage == imu::attitude::phase::running &&
                           uint32_t(now - attitude.received_ms) < cfg::imu_timeout_ms &&
                           std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
                           std::isfinite(attitude.yaw) && std::isfinite(attitude.total_yaw) &&
-                          euler_rate_valid && std::isfinite(input.gyro_pitch) &&
-                          std::isfinite(input.gyro_yaw);
+                          std::isfinite(attitude.gyro.x) && std::isfinite(attitude.gyro.z);
+                        //   euler_rate_valid && std::isfinite(input.gyro_pitch) &&
+                        //   std::isfinite(input.gyro_yaw);
         input.vision = vision.data;
         input.vision_valid = fresh(vision, now, cfg::vision_timeout_ms);
         input.lower = lower.data;
@@ -577,6 +591,23 @@ void control_entry(ULONG)
             ++diagnostic.pitch_saturations;
         }
 #ifdef smc_test_on_friction
+        const auto next_smc = friction_smc_config();
+        const auto& active_smc = friction_left_smc.configuration();
+        if (next_smc.inertia != active_smc.inertia ||
+            next_smc.reaching_gain != active_smc.reaching_gain ||
+            next_smc.surface_gain != active_smc.surface_gain ||
+            next_smc.switching_gain != active_smc.switching_gain ||
+            next_smc.boundary_layer != active_smc.boundary_layer ||
+            next_smc.saturation_limit != active_smc.saturation_limit ||
+            next_smc.output_limit != active_smc.output_limit ||
+            next_smc.velocity_integral_limit != active_smc.velocity_integral_limit)
+        {
+            // configure() validates before resetting; unchanged or invalid values keep state.
+            if (friction_left_smc.configure(next_smc))
+            {
+                (void)friction_right_smc.configure(next_smc);
+            }
+        }
         if (output.friction_enabled)
         {
             //fdb 低通滤波
@@ -585,13 +616,16 @@ void control_entry(ULONG)
                 output.friction_left_speed, friction_left.fdb.velocity, dt);
             const float right_current = friction_right_smc.update_velocity(
                 output.friction_right_speed, friction_right.fdb.velocity, dt);
-                
+
             if (friction_left_smc.state().valid && friction_right_smc.state().valid)
             {
                 friction_left.motor_mode = motor::mode::current;
                 friction_right.motor_mode = motor::mode::current;
-                friction_left.cmd.current = static_cast<int16_t>(std::lround(left_current));
-                friction_right.cmd.current = static_cast<int16_t>(std::lround(right_current));
+                // Clamp to C620 protocol range before narrowing a tunable SMC output.
+                friction_left.cmd.current = static_cast<int16_t>(
+                    std::lround(std::clamp(left_current, -16384.0f, 16384.0f)));
+                friction_right.cmd.current = static_cast<int16_t>(
+                    std::lround(std::clamp(right_current, -16384.0f, 16384.0f)));
             }
             else
             {
@@ -625,7 +659,7 @@ void control_entry(ULONG)
 #endif
 #ifdef DEBUG
         debug_fricl_vel = friction_left.fdb.velocity;
-        debug_fricr_vel = friction_right.fdb.velocity;
+        debug_fricr_vel = -friction_right.fdb.velocity;
 #endif
         motors.update();
         if (motor_bus.ready && !motor_recovering)
