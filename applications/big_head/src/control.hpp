@@ -45,6 +45,8 @@ struct control_parameters
     float mouse_yaw_scale;
     float mouse_pitch_scale;
     float keyboard_slew_per_tick;
+    float vt03_wheel_fire_threshold;
+    float vt03_wheel_release_threshold;
     float friction_speed;
     float friction_ready_ratio;
     float friction_drop;
@@ -156,6 +158,8 @@ private:
     float keyboard_vx_ = 0.0f;
     float keyboard_vy_ = 0.0f;
     int8_t leg_level_ = 0;
+    bool wheel_fire_armed_ = true;
+    bool wheel_fire_requested_ = false;
     bool auto_fire_active_ = false;
     bool auto_fire_blocked_ = false;
     float friction_left_peak_ = 0.0f;

@@ -192,6 +192,8 @@ control_parameters control_settings()
     result.mouse_yaw_scale = cfg::mouse_yaw_scale;
     result.mouse_pitch_scale = cfg::mouse_pitch_scale;
     result.keyboard_slew_per_tick = cfg::keyboard_slew_per_tick;
+    result.vt03_wheel_fire_threshold = cfg::vt03_wheel_fire_threshold;
+    result.vt03_wheel_release_threshold = cfg::vt03_wheel_release_threshold;
     result.friction_speed = cfg::friction_speed;
     result.friction_ready_ratio = cfg::friction_ready_ratio;
     result.friction_drop = cfg::friction_drop;
@@ -577,11 +579,13 @@ void control_entry(ULONG)
 #ifdef smc_test_on_friction
         if (output.friction_enabled)
         {
+            //fdb 低通滤波
             constexpr float dt = cfg::control_period_ms * 0.001f;
             const float left_current = friction_left_smc.update_velocity(
                 output.friction_left_speed, friction_left.fdb.velocity, dt);
             const float right_current = friction_right_smc.update_velocity(
                 output.friction_right_speed, friction_right.fdb.velocity, dt);
+                
             if (friction_left_smc.state().valid && friction_right_smc.state().valid)
             {
                 friction_left.motor_mode = motor::mode::current;

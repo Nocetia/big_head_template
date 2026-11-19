@@ -107,6 +107,9 @@ void controller::reset_remote(const control_input& input)
     leg_level_ = 0;
     keyboard_vx_ = 0.0f;
     keyboard_vy_ = 0.0f;
+    wheel_fire_armed_ = finite(input.remote.wheel) &&
+                        std::fabs(input.remote.wheel) <= config_.vt03_wheel_release_threshold;
+    wheel_fire_requested_ = false;
     auto_fire_blocked_ = false;
     mouse_yaw_.reset();
     mouse_pitch_.reset();
@@ -147,6 +150,28 @@ control_output controller::update(const control_input& input)
         armed_ = false;
     }
 
+    bool wheel_fire_edge = false;
+    if (new_frame && input.source == remote_source::vt03)
+    {
+        if (!finite(remote.wheel))
+        {
+            wheel_fire_armed_ = false;
+        }
+        else
+        {
+            const float wheel = std::fabs(remote.wheel);
+            if (wheel <= config_.vt03_wheel_release_threshold)
+            {
+                wheel_fire_armed_ = true;
+            }
+            else if (wheel >= config_.vt03_wheel_fire_threshold)
+            {
+                wheel_fire_edge = wheel_fire_armed_;
+                wheel_fire_armed_ = false;
+            }
+        }
+    }
+
     bool turn = false;
     bool jump = false;
     bool fly = false;
@@ -162,6 +187,11 @@ control_output controller::update(const control_input& input)
             else if (remote.fn_2 && !previous_remote_.fn_2)
             {
                 shooter_ = static_cast<shooter_mode>((static_cast<unsigned>(shooter_) + 1U) % 3U);
+            }
+            if (wheel_fire_edge && shooter_ == shooter_mode::warm)
+            {
+                wheel_fire_requested_ = true;
+                auto_fire_blocked_ = false;
             }
         }
         if (remote.key.Q && !previous_remote_.key.Q)
@@ -206,6 +236,7 @@ control_output controller::update(const control_input& input)
         aim_rune_ = false;
         keyboard_vx_ = 0.0f;
         keyboard_vy_ = 0.0f;
+        wheel_fire_requested_ = false;
         auto_fire_blocked_ = false;
         mouse_yaw_.reset();
         mouse_pitch_.reset();
@@ -431,6 +462,7 @@ control_output controller::update(const control_input& input)
                                finite(input.friction_right_speed);
     if (shooter_ == shooter_mode::closed || !wheels_online || !input.lower_valid)
     {
+        wheel_fire_requested_ = false;
         auto_fire_active_ = false;
         auto_fire_blocked_ = false;
         return output;
@@ -453,12 +485,14 @@ control_output controller::update(const control_input& input)
         std::fabs(pitch_reference_ - input.pitch) < config_.fire_angle_tolerance;
     const bool automatic_request =
         output.auto_shoot && ((target_accepted && vision.mode == 2 && aim_ready) || check_fire);
-    if (!automatic_request)
+    const bool single_fire_request = automatic_request || wheel_fire_requested_;
+    if (!single_fire_request)
     {
         auto_fire_blocked_ = false;
     }
     if (!heat_ready || !wheels_ready)
     {
+        wheel_fire_requested_ = false;
         auto_fire_active_ = false;
         return output;
     }
@@ -466,18 +500,20 @@ control_output controller::update(const control_input& input)
         (!high_frequency_ || aim_rune_) ? config_.trigger_low : config_.trigger_high;
     if (manual_fire)
     {
+        wheel_fire_requested_ = false;
         auto_fire_active_ = false;
         auto_fire_blocked_ = false;
         output.lower.tri_spd = remote.key.CTRL ? config_.trigger_reverse : normal_speed;
     }
-    else if (output.auto_shoot)
+    else if (output.auto_shoot || wheel_fire_requested_)
     {
-        // Loss of the target cancels the in-flight command immediately; stale mode=2 is never used.
-        if (!automatic_request)
+        // The wheel request stays latched for one shot. Without it, target loss cancels a
+        // vision shot.
+        if (!single_fire_request)
         {
             auto_fire_active_ = false;
         }
-        if (!auto_fire_active_ && automatic_request && !auto_fire_blocked_)
+        if (!auto_fire_active_ && single_fire_request && !auto_fire_blocked_)
         {
             auto_fire_active_ = true;
             auto_fire_start_ms_ = input.now_ms;
@@ -495,7 +531,8 @@ control_output controller::update(const control_input& input)
             if (dropped || timed_out)
             {
                 auto_fire_active_ = false;
-                auto_fire_blocked_ = timed_out;
+                wheel_fire_requested_ = false;
+                auto_fire_blocked_ = timed_out && automatic_request;
                 if (dropped)
                 {
                     ++bullet_count_;

@@ -28,8 +28,8 @@ control_parameters settings()
     return {{140, 0, 3000, 500, 10}, {4000, 0, 10000, 25000, 100}, {80, 0, 800, 500, 50},
         {200, 0, 0, 500, 50}, {0.009f, 0.02f, 0.6151134f, 1.35f}, {0, 0.02f, 0.6151134f, 1.35f},
         {0.1f, 0.543f}, {0.001f, 0.543f}, {0.001f, 0.543f}, 25000, 15000, 50, 1750, 2000, -0.6f,
-        0.4f, 0.005f, 0.05f, 0.025f, 0.01f, 0.002f, 600, 0.9f, 6, 0.7f, 0.01f, 4, 8, 16, -8, 1000,
-        true, true, true};
+        0.4f, 0.005f, 0.05f, 0.025f, 0.01f, 0.002f, 0.5f, 0.2f, 600, 0.9f, 6, 0.7f, 0.01f, 4,
+        8, 16, -8, 1000, true, true, true};
 }
 
 control_input ready_input()
@@ -287,6 +287,43 @@ void test_automatic_shot()
         "a target beyond mechanical pitch travel must not count as aligned");
 }
 
+void test_vt03_wheel_single_shot()
+{
+    controller control{settings()};
+    auto input = ready_input();
+    arm(control, input);
+
+    input.remote.wheel = 0.6f;
+    require(control.update(input).lower.tri_spd == 0,
+        "VT03 wheel movement is ignored while the shooter is closed");
+    input.remote.wheel = 0.0f;
+    (void)control.update(input);
+    warm(control, input);
+
+    input.remote.wheel = 0.6f;
+    auto output = control.update(input);
+    require(output.auto_fire && output.lower.tri_spd == 8,
+        "VT03 wheel movement starts one shot in Warm mode");
+    output = control.update(input);
+    require(output.auto_fire && output.lower.tri_spd == 8,
+        "held VT03 wheel keeps only the current shot active");
+
+    input.friction_left_speed = 593;
+    output = control.update(input);
+    require(!output.auto_fire && output.lower.tri_spd == 0 && output.bullet_count == 1,
+        "wheel-triggered shot ends on friction speed drop");
+    input.friction_left_speed = 600;
+    require(control.update(input).lower.tri_spd == 0,
+        "held VT03 wheel does not start another shot");
+
+    input.remote.wheel = 0.1f;
+    require(control.update(input).lower.tri_spd == 0, "VT03 wheel rearms near center");
+    input.remote.wheel = -0.6f;
+    output = control.update(input);
+    require(output.auto_fire && output.lower.tri_spd == 8,
+        "either VT03 wheel direction starts the next shot after recentering");
+}
+
 void test_manual_takeover()
 {
     controller control{settings()};
@@ -318,6 +355,7 @@ int main()
     test_spin_chassis_control();
     test_aim_and_limits();
     test_automatic_shot();
+    test_vt03_wheel_single_shot();
     test_manual_takeover();
     std::puts("Control state, safety, limits and shot tests passed");
 }

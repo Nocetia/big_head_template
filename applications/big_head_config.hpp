@@ -52,6 +52,8 @@ inline constexpr float manual_angle_scale = 0.05f;
 inline constexpr float mouse_yaw_scale = 0.025f;
 inline constexpr float mouse_pitch_scale = 0.01f;
 inline constexpr float keyboard_slew_per_tick = 0.002f;
+inline constexpr float vt03_wheel_fire_threshold = 0.5f;
+inline constexpr float vt03_wheel_release_threshold = 0.2f;
 inline constexpr float friction_speed = 600.0f;
 inline constexpr float friction_ready_ratio = 0.9f;
 inline constexpr float friction_drop = 6.0f;
@@ -84,6 +86,10 @@ static_assert(pitch_id != friction_left_id && pitch_id != friction_right_id &&
                   friction_left_id != friction_right_id,
     "motor feedback IDs must be unique");
 static_assert(pitch_min < pitch_max, "pitch_min must be less than pitch_max");
+static_assert(vt03_wheel_release_threshold >= 0.0f &&
+                  vt03_wheel_release_threshold < vt03_wheel_fire_threshold &&
+                  vt03_wheel_fire_threshold <= 1.0f,
+    "VT03 wheel thresholds must provide hysteresis within the normalized range");
 static_assert(friction_velocity_pid[3] > 0.0f && friction_velocity_pid[3] <= 16384.0f,
     "M3508 command must fit the DJI current range");
 static_assert(yaw_current_limit > 0.0f && yaw_current_limit <= 32767.0f,
