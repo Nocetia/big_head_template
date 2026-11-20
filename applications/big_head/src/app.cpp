@@ -20,6 +20,10 @@ namespace big_head
 #ifdef DEBUG
 volatile float debug_fricl_vel = 0.0f;
 volatile float debug_fricr_vel = 0.0f;
+#ifdef smc_test_on_friction
+volatile float debug_fricl_vel_filtered = 0.0f;
+volatile float debug_fricr_vel_filtered = 0.0f;
+#endif
 #endif
 
 // Debugger writes; the control thread samples these once per cycle for both motors.
@@ -32,6 +36,8 @@ volatile float debug_smc_boundary_layer = 0.5f;
 volatile float debug_smc_saturation_limit = 1.0f;
 volatile float debug_smc_output_limit = 1500.0f;
 volatile float debug_smc_velocity_integral_limit = 2.0f;
+constexpr float default_fric_cutoff_hz = 80.0f;
+volatile float debug_fric_cutoff_hz = default_fric_cutoff_hz;
 
 namespace cfg = config;
 using pnxtypes::status;
@@ -148,6 +154,32 @@ sample<vision_telemetry> telemetry;
 vision_parser vision_decoder;
 
 #ifdef smc_test_on_friction
+struct velocity_filter
+{
+    float previous_input = 0.0f;
+    float output = 0.0f;
+    bool initialized = false;
+};
+
+// Called once per control tick with the latest raw velocity (rad/s).
+float low_pass_velocity(float input, bool online, float b, velocity_filter& state)
+{
+    if (!online || !std::isfinite(input))
+    {
+        state = {};
+        return 0.0f;
+    }
+    if (!state.initialized)
+    {
+        state = {input, input, true};
+        return input;
+    }
+
+    state.output = (1.0f - 2.0f * b) * state.output + b * (input + state.previous_input);
+    state.previous_input = input;
+    return state.output;
+}
+
 control::smc_config friction_smc_config()
 {
     control::smc_config result;
@@ -454,6 +486,15 @@ vision_telemetry make_telemetry(const imu::attitude::state& attitude, const cont
 void control_entry(ULONG)
 {
     controller control{control_settings()};
+#ifdef smc_test_on_friction
+    velocity_filter left_velocity_filter;
+    velocity_filter right_velocity_filter;
+    constexpr float filter_dt = cfg::control_period_ms * 0.001f;
+    float filter_cutoff_hz = default_fric_cutoff_hz;
+    // Prewarped bilinear first-order low-pass: -3 dB at the requested cutoff.
+    const float filter_k = std::tan(math::pi * filter_cutoff_hz * filter_dt);
+    float filter_b = filter_k / (1.0f + filter_k);
+#endif
     imu::attitude::state attitude;
     sample<lower_status> lower;
     uint32_t lower_sequence = 0;
@@ -591,6 +632,28 @@ void control_entry(ULONG)
             ++diagnostic.pitch_saturations;
         }
 #ifdef smc_test_on_friction
+        //debug：fric_vel_raw, firc_vel_filtered, surface, err, 等效控制项，等效切换项，最终控制输出，实际电机电流
+        const float next_cutoff_hz = debug_fric_cutoff_hz;
+        if (next_cutoff_hz != filter_cutoff_hz && std::isfinite(next_cutoff_hz) &&
+            next_cutoff_hz > 0.0f && next_cutoff_hz < 0.5f / filter_dt)
+        {
+            const float k = std::tan(math::pi * next_cutoff_hz * filter_dt);
+            const float b = k / (1.0f + k);
+            // Reject extreme values whose float-rounded pole is no longer stable.
+            if (std::abs(1.0f - 2.0f * b) < 1.0f)
+            {
+                filter_b = b;
+                filter_cutoff_hz = next_cutoff_hz;
+            }
+        }
+        const float left_velocity = low_pass_velocity(friction_left.fdb.velocity,
+            input.friction_left_online, filter_b, left_velocity_filter);
+        const float right_velocity = low_pass_velocity(friction_right.fdb.velocity,
+            input.friction_right_online, filter_b, right_velocity_filter);
+#ifdef DEBUG
+        debug_fricl_vel_filtered = left_velocity;
+        debug_fricr_vel_filtered = -right_velocity;
+#endif
         const auto next_smc = friction_smc_config();
         const auto& active_smc = friction_left_smc.configuration();
         if (next_smc.inertia != active_smc.inertia ||
@@ -610,12 +673,11 @@ void control_entry(ULONG)
         }
         if (output.friction_enabled)
         {
-            //fdb 低通滤波
             constexpr float dt = cfg::control_period_ms * 0.001f;
             const float left_current = friction_left_smc.update_velocity(
-                output.friction_left_speed, friction_left.fdb.velocity, dt);
+                output.friction_left_speed, left_velocity, dt);
             const float right_current = friction_right_smc.update_velocity(
-                output.friction_right_speed, friction_right.fdb.velocity, dt);
+                output.friction_right_speed, right_velocity, dt);
 
             if (friction_left_smc.state().valid && friction_right_smc.state().valid)
             {

@@ -144,6 +144,18 @@ IMU/Pitch 临时失效会清空 PID 和射击状态，但保留解锁状态：�
 
 ### 摩擦轮 SMC 实时调参
 
+SMC 的左右轮速度反馈分别经过一阶低通，函数 `low_pass_velocity()` 暂放在 `src/app.cpp`。
+截止频率由 `big_head::debug_fric_cutoff_hz` 实时调整，默认 80 Hz。控制线程每周期读取一次，
+有效改值时更新两侧共用的系数，保留滤波历史和 SMC 状态；无效值继续使用上一次有效频率。
+频率必须有限且大于 0、小于采样频率的一半，当前 1 ms 周期下范围为 `0 < f < 500 Hz`。
+无法用单精度系数保持稳定的极端频率也会被忽略。
+滤波每周期使用最新原始速度更新，采用预畸变双线性变换，在所设截止频率处衰减约 3 dB。
+启动或失联恢复后用首个有效速度初始化；CAN 恢复、反馈过期或非有限数会清空对应滤波状态。
+原始电机反馈及射击就绪/掉速判断仍使用原始速度。Debug 构建可对比
+`big_head::debug_fricl_vel` / `debug_fricr_vel`（原始）与
+`big_head::debug_fricl_vel_filtered` / `debug_fricr_vel_filtered`（滤波后），单位为 rad/s，
+右轮两组观测值均取反以便同向对比；控制器仍使用原始方向。
+
 启用 `src/app.cpp` 中的 `#define smc_test_on_friction` 后重新编译、烧录，在调试器的
 Watch / Live Watch 中修改以下 `volatile float` 变量，两侧摩擦轮共用这些参数：
 
@@ -156,16 +168,17 @@ big_head::debug_smc_boundary_layer          // 默认 0.5
 big_head::debug_smc_saturation_limit        // 默认 1.0
 big_head::debug_smc_output_limit            // 默认 1500.0，C620 电流协议单位
 big_head::debug_smc_velocity_integral_limit // 默认 2.0，速度误差积分限幅（rad）
+big_head::debug_fric_cutoff_hz              // 默认 80.0，低通截止频率（Hz）
 ```
 
-控制线程每个周期（默认 1 ms）读取一次，变化且通过 SMC 校验后在本周期应用，同时重置两侧
+8 个 SMC 参数每个周期（默认 1 ms）读取一次，变化且通过校验后在本周期应用，同时重置两侧
 SMC 的积分和目标历史；参数不变时保留状态。非有限数或非法范围不会应用，继续使用上一次
 有效配置：`inertia`、`saturation_limit`、`output_limit` 必须大于零，其余参数允许为零、
 不允许为负。最终电流命令另限幅至 C620 的 ±16384，避免改大输出限幅后转换溢出。
 逐项修改会逐项生效；需要整组同时修改时先暂停目标再改值，恢复后应用。重启后恢复源码默认值。
 
 PnX Platform 仅允许写入能在源码中确认唯一且显式初始化的变量，会忽略条件编译内的声明，
-因此这 8 个调参变量声明放在 `#if/#ifdef` 之外，实际 SMC 控制仍由上述宏选择。
+因此这 9 个调参变量声明放在 `#if/#ifdef` 之外，实际 SMC 控制仍由上述宏选择。
 修改声明所在文件后需重新构建、烧录匹配固件，并重新连接以刷新写入校验；在 PnX 中选择
 `build/h723_mc02/embedded_framework.elf` 和可写连接，源码时间须不晚于 ELF。
 
