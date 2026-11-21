@@ -156,6 +156,22 @@ SMC 的左右轮速度反馈分别经过一阶低通，函数 `low_pass_velocity
 `big_head::debug_fricl_vel_filtered` / `debug_fricr_vel_filtered`（滤波后），单位为 rad/s，
 右轮两组观测值均取反以便同向对比；控制器仍使用原始方向。
 
+Debug 构建还提供以下左右轮观测量；将名称中的 `fricl` 换成 `fricr` 即为右轮，右轮值已
+取反到和左轮相同的正方向：
+
+```cpp
+big_head::debug_fricl_surface              // 滑模面 s
+big_head::debug_fricl_err                  // 速度误差：滤波反馈 - 目标（rad/s）
+big_head::debug_fricl_equivalent_output    // u_eq = J * (target_rate - c * err)
+big_head::debug_fricl_switching_output     // u_sw = -J * (K * s + epsilon * sat(s))
+big_head::debug_fricl_smc_output           // output_limit 限幅后的 SMC 浮点输出
+big_head::debug_fricl_current_feedback     // C620 回传转矩电流原始协议值，非安培
+```
+
+`equivalent_output + switching_output` 是 SMC 限幅前输出；`smc_output` 是两项相加后经过
+`output_limit` 的值。实际下发前还会取整并限制到 C620 的 ±16384。控制器无效或停转时前五项
+清零；电机离线时电流反馈也清零。这些是控制线程写入的观测变量，在 PnX 中保持只读。
+
 启用 `src/app.cpp` 中的 `#define smc_test_on_friction` 后重新编译、烧录，在调试器的
 Watch / Live Watch 中修改以下 `volatile float` 变量，两侧摩擦轮共用这些参数：
 

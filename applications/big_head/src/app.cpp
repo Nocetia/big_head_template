@@ -23,18 +23,30 @@ volatile float debug_fricr_vel = 0.0f;
 #ifdef smc_test_on_friction
 volatile float debug_fricl_vel_filtered = 0.0f;
 volatile float debug_fricr_vel_filtered = 0.0f;
+volatile float debug_fricl_surface = 0.0f;
+volatile float debug_fricr_surface = 0.0f;
+volatile float debug_fricl_err = 0.0f;
+volatile float debug_fricr_err = 0.0f;
+volatile float debug_fricl_equivalent_output = 0.0f;
+volatile float debug_fricr_equivalent_output = 0.0f;
+volatile float debug_fricl_switching_output = 0.0f;
+volatile float debug_fricr_switching_output = 0.0f;
+volatile float debug_fricl_smc_output = 0.0f;
+volatile float debug_fricr_smc_output = 0.0f;
+volatile float debug_fricl_current_feedback = 0.0f;
+volatile float debug_fricr_current_feedback = 0.0f;
 #endif
 #endif
 
 // Debugger writes; the control thread samples these once per cycle for both motors.
 // PnX verifies only declarations outside conditional compilation before allowing writes.
 volatile float debug_smc_inertia = 5.0f; // 理论 5
-volatile float debug_smc_reaching_gain = 0.5f;
-volatile float debug_smc_surface_gain = 0.5f;
-volatile float debug_smc_switching_gain = 0.5f;
-volatile float debug_smc_boundary_layer = 0.5f;
-volatile float debug_smc_saturation_limit = 1.0f;
-volatile float debug_smc_output_limit = 1500.0f;
+volatile float debug_smc_reaching_gain = 20.0f;
+volatile float debug_smc_surface_gain = 3.0f;
+volatile float debug_smc_switching_gain = 15.0f;
+volatile float debug_smc_boundary_layer = 0.01f;
+volatile float debug_smc_saturation_limit = 5.0f;
+volatile float debug_smc_output_limit = 8000.0f;
 volatile float debug_smc_velocity_integral_limit = 2.0f;
 constexpr float default_fric_cutoff_hz = 80.0f;
 volatile float debug_fric_cutoff_hz = default_fric_cutoff_hz;
@@ -161,6 +173,16 @@ struct velocity_filter
     bool initialized = false;
 };
 
+struct smc_debug_values
+{
+    float surface = 0.0f;
+    float error = 0.0f;
+    float equivalent_output = 0.0f;
+    float switching_output = 0.0f;
+    float output = 0.0f;
+    float current_feedback = 0.0f;
+};
+
 // Called once per control tick with the latest raw velocity (rad/s).
 float low_pass_velocity(float input, bool online, float b, velocity_filter& state)
 {
@@ -178,6 +200,48 @@ float low_pass_velocity(float input, bool online, float b, velocity_filter& stat
     state.output = (1.0f - 2.0f * b) * state.output + b * (input + state.previous_input);
     state.previous_input = input;
     return state.output;
+}
+
+smc_debug_values read_smc_debug(
+    const control::smc& instance, int16_t current_feedback, bool online)
+{
+    smc_debug_values result;
+    result.current_feedback = online ? static_cast<float>(current_feedback) : 0.0f;
+
+    const auto& state = instance.state();
+    if (!state.valid)
+    {
+        return result;
+    }
+
+    const auto& config = instance.configuration();
+    float saturation = 0.0f;
+    if (config.boundary_layer == 0.0f)
+    {
+        if (state.surface > 0.0f)
+        {
+            saturation = config.saturation_limit;
+        }
+        else if (state.surface < 0.0f)
+        {
+            saturation = -config.saturation_limit;
+        }
+    }
+    else
+    {
+        saturation = std::clamp(state.surface / config.boundary_layer,
+            -config.saturation_limit, config.saturation_limit);
+    }
+
+    result.surface = state.surface;
+    result.error = state.velocity_error;
+    result.equivalent_output =
+        config.inertia * (state.target_rate - config.surface_gain * state.velocity_error);
+    const float reaching_output = config.reaching_gain * state.surface;
+    const float saturation_output = config.switching_gain * saturation;
+    result.switching_output = -config.inertia * (reaching_output + saturation_output);
+    result.output = state.output;
+    return result;
 }
 
 control::smc_config friction_smc_config()
@@ -633,6 +697,9 @@ void control_entry(ULONG)
         }
 #ifdef smc_test_on_friction
         //debug：fric_vel_raw, firc_vel_filtered, surface, err, 等效控制项，等效切换项，最终控制输出，实际电机电流
+        // debug_fricl_vel, debug_fricl_vel_filtered, debug_fricl_surface, debug_fricl_err,
+        // debug_fricl_equivalent_output, debug_fricl_switching_output,
+        // debug_fricl_smc_output, debug_fricl_current_feedback
         const float next_cutoff_hz = debug_fric_cutoff_hz;
         if (next_cutoff_hz != filter_cutoff_hz && std::isfinite(next_cutoff_hz) &&
             next_cutoff_hz > 0.0f && next_cutoff_hz < 0.5f / filter_dt)
@@ -708,6 +775,24 @@ void control_entry(ULONG)
             friction_left.cmd.current = 0;
             friction_right.cmd.current = 0;
         }
+#ifdef DEBUG
+        const auto left_smc_debug = read_smc_debug(friction_left_smc,
+            friction_left.fdb.torque_current_raw, input.friction_left_online);
+        const auto right_smc_debug = read_smc_debug(friction_right_smc,
+            friction_right.fdb.torque_current_raw, input.friction_right_online);
+        debug_fricl_surface = left_smc_debug.surface;
+        debug_fricr_surface = -right_smc_debug.surface;
+        debug_fricl_err = left_smc_debug.error;
+        debug_fricr_err = -right_smc_debug.error;
+        debug_fricl_equivalent_output = left_smc_debug.equivalent_output;
+        debug_fricr_equivalent_output = -right_smc_debug.equivalent_output;
+        debug_fricl_switching_output = left_smc_debug.switching_output;
+        debug_fricr_switching_output = -right_smc_debug.switching_output;
+        debug_fricl_smc_output = left_smc_debug.output;
+        debug_fricr_smc_output = -right_smc_debug.output;
+        debug_fricl_current_feedback = left_smc_debug.current_feedback;
+        debug_fricr_current_feedback = -right_smc_debug.current_feedback;
+#endif
 #else
         friction_left.motor_mode = output.friction_enabled ? motor::mode::vel : motor::mode::relax;
         friction_right.motor_mode = friction_left.motor_mode;
